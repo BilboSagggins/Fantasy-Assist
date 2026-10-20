@@ -90,8 +90,10 @@
                     <svg viewBox="0 0 120 120" class="w-20 h-20 sm:w-24 sm:h-24" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <g transform="translate(60 60) rotate(-35) scale(1.18)">
                                 <path d="M-48 0 C-30 -32 30 -32 48 0 C30 32 -30 32 -48 0 Z"/>
-                                <path d="M-33 -17 C-36 -6 -36 6 -33 17"/>
-                                <path d="M33 -17 C36 -6 36 6 33 17"/>
+                                <path d="M-35 -14 C-38 -5 -38 5 -35 14"/>
+                                <path d="M-27 -18 C-30 -6 -30 6 -27 18"/>
+                                <path d="M35 -14 C38 -5 38 5 35 14"/>
+                                <path d="M27 -18 C30 -6 30 6 27 18"/>
                                 <path d="M-16 0 H16"/>
                                 <path d="M-10 -5 V5 M-3.3 -5 V5 M3.3 -5 V5 M10 -5 V5" stroke-width="4"/>
                             </g>
@@ -487,7 +489,19 @@
             document.getElementById('install-btn').classList.add('hidden');
         }
         if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-            window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => { /* not critical */ }));
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+                    .then(reg => reg.update())
+                    .catch(() => { /* not critical */ });
+            });
+            // When a new version takes over, reload once so you see it right away
+            let reloadedForUpdate = false;
+            const hadController = !!navigator.serviceWorker.controller;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (!hadController || reloadedForUpdate) return;
+                reloadedForUpdate = true;
+                location.reload();
+            });
         }
 
         window.onload = function () {

@@ -1,6 +1,6 @@
 // RosterIQ service worker: makes the site installable and opens instantly.
 // Bump VERSION whenever index.html changes so phones pick up the update.
-const VERSION = 'rosteriq-v12';
+const VERSION = 'rosteriq-v13';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/logo.png'];
 const STATIC_HOSTS = ['cdn.tailwindcss.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
@@ -24,7 +24,7 @@ self.addEventListener('fetch', event => {
     // The app page: always try the network first so you get the newest version
     if (req.mode === 'navigate' || (url.origin === location.origin && url.pathname.endsWith('/index.html'))) {
         event.respondWith(
-            fetch(req)
+            fetch(req, { cache: 'no-store' }) // skip the browser's 10-minute cache so you always get the newest page
                 .then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put('./index.html', copy)); return res; })
                 .catch(() => caches.match('./index.html'))
         );
