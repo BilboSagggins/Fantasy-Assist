@@ -1,6 +1,6 @@
 // RosterIQ service worker: makes the site installable and opens instantly.
 // Bump VERSION whenever index.html changes so phones pick up the update.
-const VERSION = 'rosteriq-v15';
+const VERSION = 'rosteriq-v16';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/logo.png'];
 const STATIC_HOSTS = ['cdn.tailwindcss.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
@@ -48,4 +48,29 @@ self.addEventListener('fetch', event => {
         event.respondWith(caches.match(req).then(hit => hit || fetch(req)));
     }
     // Everything else (Sleeper, ESPN, headshots) goes straight to the network: live data only
+});
+
+// ---------- Push notifications (daily lock reminder) ----------
+self.addEventListener('push', event => {
+    let d = {};
+    try { d = event.data ? event.data.json() : {}; } catch (e) { d = { body: event.data && event.data.text() }; }
+    event.waitUntil(self.registration.showNotification(d.title || 'RosterIQ', {
+        body: d.body || 'Time to check your locks.',
+        icon: 'icons/icon-192.png',
+        badge: 'icons/icon-192.png',
+        tag: 'lock-reminder',
+        renotify: true,
+        data: { url: d.url || './' }
+    }));
+});
+
+self.addEventListener('notificationclick', event => {
+    event.notification.close();
+    const url = new URL((event.notification.data && event.notification.data.url) || './', self.registration.scope).href;
+    event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(wins => {
+        for (const w of wins) {
+            if (w.url.startsWith(self.registration.scope)) { w.focus(); return w.navigate ? w.navigate(url) : undefined; }
+        }
+        return self.clients.openWindow(url);
+    }));
 });

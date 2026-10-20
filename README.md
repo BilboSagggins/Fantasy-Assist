@@ -12,3 +12,8 @@ The app opens full screen from your home screen and always loads the newest vers
 
 ## Updating
 After changing `index.html`, bump `VERSION` in `sw.js` (e.g. `rosteriq-v2`) so installed copies refresh their cache.
+
+## Daily lock reminder (10 AM Central)
+1. In the app: Lockdown Advisor → **Daily lock reminder** → **Turn on reminders**, then **Copy code**.
+2. On GitHub: Settings → Secrets and variables → Actions → **New repository secret**, name it `PUSH_CONFIG`, paste the code.
+3. The **Lock reminder** workflow sends the notification every day at 10 AM Central (Actions → Lock reminder → Run workflow to test).

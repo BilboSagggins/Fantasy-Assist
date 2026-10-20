@@ -1,0 +1,24 @@
+name: Lock reminder
+
+# Sends a push notification to your phone at 10 AM Central every day.
+# GitHub schedules run in UTC, so there's one run for daylight time and one for
+# standard time; the script only sends from the one that lands at 10 AM Central.
+on:
+  schedule:
+    - cron: '0 15 * * *'   # 10 AM CDT
+    - cron: '0 16 * * *'   # 10 AM CST
+  workflow_dispatch: {}    # "Run workflow" button for a test send
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-save web-push@3.6.7
+      - run: node .github/scripts/send-reminder.mjs
+        env:
+          PUSH_CONFIG: ${{ secrets.PUSH_CONFIG }}
+          SCHEDULE: ${{ github.event.schedule }}

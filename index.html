@@ -213,6 +213,12 @@
                 </summary>
                 <div id="league-plan" class="space-y-3 mt-3"></div>
             </details>
+            <details id="reminder-wrap" class="group" ontoggle="if (this.open) renderReminder()">
+                <summary class="cursor-pointer list-none text-[11px] font-semibold text-slate-500 hover:text-slate-300 select-none">
+                    <i class="fa-solid fa-chevron-right mr-1 transition group-open:rotate-90"></i><i class="fa-solid fa-bell mr-1"></i>Daily lock reminder (10 AM)
+                </summary>
+                <div id="reminder-body" class="mt-2 p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 text-[11px] text-slate-300"></div>
+            </details>
         </section>
 
         <!-- Player Selection Cards Row (3 Slots) -->
@@ -505,12 +511,14 @@
         }
 
         window.onload = function () {
-            initCharts();
+            try { initCharts(); } catch (e) { console.warn('Charts unavailable:', e); } // the app still works without them
             renderSelectionCards();
             renderComparisonGrid();
             const savedUser = lsGet('rosteriq_user');
             if (savedUser) document.getElementById('league-username').value = savedUser;
-            showLanding(); // data loads after you pick NFL or NBA
+            const askSport = new URLSearchParams(location.search).get('sport');
+            if (askSport === 'nba' || askSport === 'nfl') chooseSport(askSport); // opened from a notification
+            else showLanding(); // data loads after you pick NFL or NBA
         };
 
         function switchSport(sport) {
@@ -1878,6 +1886,98 @@
                 <button onclick="refreshLeague()" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition">
                     <i class="fa-solid fa-rotate mr-1 text-emerald-400"></i>Refresh scores &amp; game status
                 </button>`;
+        }
+
+
+        // ---------- Daily lock reminder (push notifications sent by a GitHub Action) ----------
+        const SECRET_URL = 'https://github.com/BilboSagggins/Fantasy-Assist/settings/secrets/actions/new';
+        const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        const fromB64u = str => Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((str.length + 3) % 4)), c => c.charCodeAt(0));
+        const pushSupported = () => window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && !!(window.crypto && crypto.subtle);
+
+        async function renderReminder(note) {
+            const el = document.getElementById('reminder-body');
+            if (!pushSupported()) {
+                el.innerHTML = `Reminders need the web version of the app. Open <strong>bilbosagggins.github.io/Fantasy-Assist</strong> (or the installed app) and turn them on there.`;
+                return;
+            }
+            let sub = null;
+            try { sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription(); } catch (e) { /* none */ }
+            const code = lsGet('rosteriq_push_config');
+            const msg = note ? `<div class="text-amber-300">${esc(note)}</div>` : '';
+            if (!sub || !code || Notification.permission !== 'granted') {
+                el.innerHTML = `
+                    <div>Get a notification on this phone every morning at 10 AM Central to lock your picks. Tapping it opens the app on NBA.</div>
+                    ${msg}
+                    <button onclick="enableReminders()" class="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"><i class="fa-solid fa-bell mr-1"></i>Turn on reminders</button>`;
+                return;
+            }
+            el.innerHTML = `
+                <div class="text-emerald-300 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>Notifications are on for this phone.</div>
+                ${msg}
+                <div class="font-bold text-slate-200">One-time setup on GitHub</div>
+                <ol class="list-decimal pl-4 space-y-1">
+                    <li>Tap <strong>Copy code</strong>.</li>
+                    <li>Tap <strong>Open GitHub</strong>, name the secret <code class="px-1 rounded bg-slate-800 text-emerald-300">PUSH_CONFIG</code>, paste the code as the value, and tap <strong>Add secret</strong>.</li>
+                    <li>Done. Reminders arrive at 10 AM Central. To test now: GitHub &rarr; Actions &rarr; Lock reminder &rarr; Run workflow.</li>
+                </ol>
+                <div class="flex gap-2">
+                    <button onclick="copyReminderCode()" class="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"><i class="fa-solid fa-copy mr-1"></i>Copy code</button>
+                    <a href="${SECRET_URL}" target="_blank" rel="noopener" class="flex-1 text-center py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200"><i class="fa-brands fa-github mr-1"></i>Open GitHub</a>
+                </div>
+                <div class="text-slate-500">Keep this code private: it lets GitHub send notifications to this phone. If you turn reminders off and on again, the code changes and you'll need to update the secret.</div>
+                <div class="flex gap-2">
+                    <button onclick="testReminder()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200">Test on this phone</button>
+                    <button onclick="disableReminders()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-rose-300">Turn off</button>
+                </div>`;
+        }
+
+        async function enableReminders() {
+            try {
+                if (Notification.permission !== 'granted') {
+                    const r = await Notification.requestPermission();
+                    if (r !== 'granted') { renderReminder('Notifications are blocked for this site. Allow them in your browser’s site settings, then try again.'); return; }
+                }
+                const reg = await navigator.serviceWorker.ready;
+                let keys = null;
+                try { keys = JSON.parse(lsGet('rosteriq_vapid') || 'null'); } catch (e) { keys = null; }
+                if (!keys) {
+                    const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+                    keys = { publicKey: b64u(await crypto.subtle.exportKey('raw', kp.publicKey)), privateKey: (await crypto.subtle.exportKey('jwk', kp.privateKey)).d };
+                    lsSet('rosteriq_vapid', JSON.stringify(keys));
+                }
+                let sub = await reg.pushManager.getSubscription();
+                if (sub && sub.options && sub.options.applicationServerKey && b64u(sub.options.applicationServerKey) !== keys.publicKey) { await sub.unsubscribe(); sub = null; }
+                if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64u(keys.publicKey) });
+                const config = { subject: location.origin + location.pathname.replace(/index\.html$/, ''), publicKey: keys.publicKey, privateKey: keys.privateKey, subscriptions: [sub.toJSON()] };
+                lsSet('rosteriq_push_config', JSON.stringify(config));
+                renderReminder();
+            } catch (e) {
+                renderReminder(`Couldn't turn on reminders: ${e.message}`);
+            }
+        }
+
+        async function copyReminderCode() {
+            const code = lsGet('rosteriq_push_config') || '';
+            try { await navigator.clipboard.writeText(code); renderReminder('Code copied. Now tap Open GitHub.'); }
+            catch (e) {
+                const t = document.createElement('textarea'); t.value = code; document.body.appendChild(t); t.select();
+                try { document.execCommand('copy'); renderReminder('Code copied. Now tap Open GitHub.'); } catch (e2) { renderReminder('Copy failed. Long-press to copy instead.'); }
+                t.remove();
+            }
+        }
+
+        async function testReminder() {
+            try {
+                const reg = await navigator.serviceWorker.ready;
+                await reg.showNotification('Time to lock your picks', { body: "This is a test. Your 10 AM reminder will look like this.", icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'lock-reminder', data: { url: './?sport=nba' } });
+            } catch (e) { renderReminder(`Test failed: ${e.message}`); }
+        }
+
+        async function disableReminders() {
+            try { const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch (e) { /* already off */ }
+            try { localStorage.removeItem('rosteriq_push_config'); localStorage.removeItem('rosteriq_vapid'); } catch (e) { /* storage blocked */ }
+            renderReminder('Reminders are off. You can delete the PUSH_CONFIG secret on GitHub too.');
         }
 
         // ---------- Fix my lineup: bench starters with no game, start bench players who play ----------
