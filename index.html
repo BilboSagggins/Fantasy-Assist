@@ -163,6 +163,12 @@
                 <select id="league-select" onchange="loadLeague(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-xs text-slate-200 focus:outline-none focus:border-emerald-500"></select>
             </div>
             <div id="league-msg" class="text-xs text-slate-400">Connect your Sleeper account to get a lock-or-swap plan for every lineup slot this week.</div>
+            <div id="lineup-fix-wrap" class="hidden space-y-2">
+                <button id="fix-btn" onclick="fixLineup()" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 text-sm font-extrabold transition">
+                    <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Fix my lineup
+                </button>
+                <div id="lineup-fix"></div>
+            </div>
             <div id="league-plan" class="space-y-3"></div>
         </section>
 
@@ -1687,6 +1693,7 @@
             const badge = document.getElementById('league-week-badge');
             badge.textContent = `NBA Week ${league.week}`;
             badge.classList.remove('hidden');
+            document.getElementById('lineup-fix-wrap').classList.remove('hidden');
             const { lineup, bench } = league.plan;
             if (!lineup.length) { el.innerHTML = `<div class="text-xs text-slate-400">No lineup slots found for this league.</div>`; return; }
             const total = lineup.reduce((a, sl) => a + (sl.p ? sl.p.value : 0), 0);
@@ -1761,6 +1768,138 @@
                 </button>`;
         }
 
+        // ---------- Fix my lineup: bench starters with no game, start bench players who play ----------
+
+        async function fixLineup() {
+            const box = document.getElementById('lineup-fix');
+            const btn = document.getElementById('fix-btn');
+            if (!league.leagueId || !league.players.length) { box.innerHTML = `<div class="text-xs text-slate-400">Connect your league first.</div>`; return; }
+            btn.disabled = true;
+            box.innerHTML = `<div class="text-xs text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Reading your current Sleeper lineup...</div>`;
+            try {
+                const rosters = await getJSON(`${SLEEPER}/league/${league.leagueId}/rosters`);
+                const uid = league.user.user_id;
+                const mine = (rosters || []).find(r => r.owner_id === uid) || (rosters || []).find(r => (r.co_owners || []).includes(uid));
+                if (!mine) throw new Error('your team was not found');
+                const known = new Set(league.players.map(p => p.pid));
+                const rosterChanged = (mine.players || []).some(pid => !known.has(String(pid)));
+                league.roster = mine;
+                if (rosterChanged) {
+                    box.innerHTML = `<div class="text-xs text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Your roster changed, analyzing new players...</div>`;
+                    if (league.sport === 'nba') await buildNbaPlan(); else await buildLockPlan(true);
+                }
+                league.fixes = computeLineupFixes();
+                renderLineupFixes();
+            } catch (e) {
+                box.innerHTML = `<div class="text-xs text-rose-300">Couldn't check your lineup: ${esc(e.message)}</div>`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function computeLineupFixes() {
+            const nba = league.sport === 'nba';
+            const positions = (league.info.roster_positions || []).filter(s => !['BN', 'IR', 'TAXI'].includes(s));
+            const starters = (league.roster.starters || []).map(String);
+            const starterSet = new Set(starters.filter(x => x && x !== '0'));
+            const parked = new Set([...(league.roster.reserve || []), ...(league.roster.taxi || [])].map(String));
+            const byPid = {};
+            league.players.forEach(p => { byPid[p.pid] = p; });
+
+            const fits = (p, slot) => nba ? (!!NBA_SLOTS[slot] && nbaFits(p, slot)) : (SLOT_ELIGIBLE[slot] || []).includes(p.pos);
+            const plays = p => !p.unavailable && (nba ? p.gamesLeft > 0 : (!!p.game && p.status === 'pre_game'));
+            const worth = p => nba ? (p.value || 0) : (p.mu || 0);
+
+            const problemOf = pid => {
+                if (!pid || pid === '0') return 'empty slot';
+                const p = byPid[pid];
+                if (!p) return 'inactive or not found';
+                if (nba) {
+                    if (!p.games || !p.games.length) return 'no games this week';
+                    if (p.gamesLeft === 0) {
+                        const last = p.games.filter(g => g.done && !g.benched).pop();
+                        return last ? `no games left; scored ${last.actual.toFixed(1)} on ${fmtDate(`${last.date}T12:00:00`)}, keep him if you're locking that` : 'no games left this week';
+                    }
+                    if (p.unavailable) return p.unavailable;
+                    if (OUT_STATUS.test(p.injury || '')) return `listed ${p.injury}, may miss games`;
+                    return null;
+                }
+                if (!p.game) return 'bye week';
+                if (p.status !== 'pre_game') return null; // game started or finished: lock or swap per the plan
+                if (p.unavailable) return p.unavailable;
+                return null;
+            };
+
+            const flagged = positions.map((slot, i) => ({ slot, idx: i, pid: starters[i], reason: problemOf(starters[i]) }))
+                .filter(x => x.reason && (nba ? NBA_SLOTS[x.slot] : SLOT_ELIGIBLE[x.slot]));
+            const used = new Set();
+            const elig = slot => (nba ? NBA_SLOTS[slot] : SLOT_ELIGIBLE[slot]).length;
+            [...flagged].sort((a, b) => elig(a.slot) - elig(b.slot)).forEach(f => {
+                const best = league.players
+                    .filter(p => !starterSet.has(p.pid) && !parked.has(p.pid) && !used.has(p.pid) && plays(p) && fits(p, f.slot))
+                    .sort((a, b) => worth(b) - worth(a))[0];
+                if (best) { f.in = best; used.add(best.pid); }
+                f.out = byPid[f.pid] || null;
+                f.keep = !!(nba && f.out && f.out.gamesLeft === 0 && f.out.games.some(g => g.done && !g.benched));
+                // default: make the swap, unless he may be your locked score or still out-values the replacement
+                f.checked = !!f.in && !f.keep && (!f.out || !f.out.games || f.out.gamesLeft === 0 || worth(f.in) > worth(f.out));
+            });
+            return flagged;
+        }
+
+        function toggleFix(i, on) {
+            if (league.fixes[i]) league.fixes[i].checked = on;
+            const n = league.fixes.filter(f => f.checked && f.in).length;
+            const el = document.getElementById('fix-count');
+            if (el) el.textContent = n ? `${n} swap${n === 1 ? '' : 's'} to make in Sleeper` : 'No swaps selected';
+        }
+
+        function renderLineupFixes() {
+            const box = document.getElementById('lineup-fix');
+            const nba = league.sport === 'nba';
+            const fixes = league.fixes;
+            const sleeperUrl = `https://sleeper.com/leagues/${encodeURIComponent(league.leagueId)}/team`;
+            const openBtn = `<a href="${sleeperUrl}" target="_blank" rel="noopener" class="flex-1 text-center py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Sleeper</a>`;
+            const againBtn = `<button onclick="fixLineup()" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition"><i class="fa-solid fa-rotate mr-1 text-emerald-400"></i>Check again</button>`;
+            if (!fixes.length) {
+                box.innerHTML = `
+                    <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 space-y-2">
+                        <div><i class="fa-solid fa-circle-check mr-1"></i>Every starter has a game ${nba ? 'left this week' : 'this week'}. Nothing to swap.</div>
+                        <div class="flex gap-2">${againBtn}</div>
+                    </div>`;
+                return;
+            }
+            const nextGame = p => {
+                if (nba) {
+                    const nx = p.games.find(g => !g.done);
+                    return `${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left${nx ? ` · next ${fmtDate(`${nx.date}T12:00:00`)} ${nx.home ? 'vs' : '@'} ${nx.opp}` : ''}`;
+                }
+                return kickLabel(p);
+            };
+            box.innerHTML = `
+                <div class="p-3 rounded-xl bg-slate-900/80 border border-amber-800/60 space-y-2">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="font-bold text-sm text-amber-200"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${fixes.length} lineup ${fixes.length === 1 ? 'problem' : 'problems'}</div>
+                        <div id="fix-count" class="text-[11px] text-slate-400"></div>
+                    </div>
+                    <div class="text-[11px] text-slate-400">Uncheck any swap you want to skip, for example to keep a player you're locking.</div>
+                    ${fixes.map((f, i) => `
+                        <label class="flex items-start gap-2.5 p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 ${f.in ? 'cursor-pointer' : 'opacity-80'}">
+                            <input type="checkbox" ${f.checked ? 'checked' : ''} ${f.in ? '' : 'disabled'} onchange="toggleFix(${i}, this.checked)" class="mt-0.5 w-5 h-5 shrink-0 accent-emerald-500">
+                            <div class="flex-1 min-w-0 text-[11px] space-y-1">
+                                <span class="inline-block px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-extrabold text-emerald-400">${esc(SLOT_NAMES[f.slot] || f.slot)}</span>
+                                <div class="text-rose-300"><strong>${f.out ? 'Bench' : 'Fill'}:</strong> ${f.out ? `${esc(f.out.name)} <span class="text-rose-300/70">(${esc(f.reason)})</span>` : 'empty slot'}</div>
+                                ${f.in
+                                    ? `<div class="text-emerald-300"><strong>Start:</strong> ${esc(f.in.name)} <span class="text-slate-400">${esc(f.in.team)} ${esc((f.in.fpos || [f.in.pos]).join('/'))} · ${esc(nextGame(f.in))} · ${nba ? 'exp' : 'proj'} ${(nba ? f.in.value : f.in.mu).toFixed(1)}</span></div>`
+                                    : `<div class="text-slate-400">No eligible bench player with a game. Check the waiver wire.</div>`}
+                            </div>
+                        </label>`).join('')}
+                    <div class="text-[11px] text-slate-400">Make the checked swaps in Sleeper, then tap <strong>Check again</strong> to confirm.</div>
+                    <div class="flex gap-2">${openBtn}${againBtn}</div>
+                </div>`;
+            toggleFix(-1);
+        }
+
         function refreshLeague() {
             const run = league.sport === 'nba' ? buildNbaPlan() : buildLockPlan(false);
             return run.catch(e => setLeagueMsg('Refresh failed: ' + e.message, true));
@@ -1780,7 +1919,7 @@
         const SLOT_NAMES = { DEF: 'D/ST', FLEX: 'FLEX', WRRB_FLEX: 'W/R FLEX', REC_FLEX: 'W/T FLEX', SUPER_FLEX: 'SUPERFLEX' };
         const OUT_STATUS = /^(out|ir|injured reserve|suspended|pup|na|cov)/i;
 
-        const league = { user: null, leagueId: null, info: null, roster: null, season: null, week: null, players: [], plan: null, timesKnown: false, updated: null };
+        const league = { user: null, leagueId: null, info: null, roster: null, season: null, week: null, players: [], plan: null, timesKnown: false, updated: null, fixes: [] };
 
         function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
         function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } }
@@ -1916,6 +2055,9 @@
             league.leagueId = leagueId;
             setLeagueMsg('Loading your roster and league scoring...');
             document.getElementById('league-plan').innerHTML = '';
+            document.getElementById('lineup-fix').innerHTML = '';
+            document.getElementById('lineup-fix-wrap').classList.add('hidden');
+            league.players = [];
             try {
                 const meta = (league.leagues || []).find(l => l.league_id === leagueId) || { sport: 'nfl', season: await sleeperSeasonFor('nfl') };
                 league.sport = meta.sport;
@@ -2121,6 +2263,7 @@
             const badge = document.getElementById('league-week-badge');
             badge.textContent = `Week ${league.week}`;
             badge.classList.remove('hidden');
+            document.getElementById('lineup-fix-wrap').classList.remove('hidden');
             const plan = league.plan;
             if (!plan || !plan.chains.length) { el.innerHTML = `<div class="text-xs text-slate-400">No lineup slots found for this league.</div>`; return; }
 
