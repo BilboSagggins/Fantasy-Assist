@@ -78,13 +78,49 @@
     </style>
 </head>
 <body class="bg-slatebg text-slate-100 min-h-screen flex flex-col antialiased overflow-x-hidden">
+    <!-- Landing: choose a sport -->
+    <div id="landing" class="fixed inset-0 z-[60] bg-slatebg flex flex-col items-center justify-center px-6 overflow-y-auto" style="background: radial-gradient(120% 80% at 50% 0%, #0f2a24 0%, #080c14 60%);">
+        <div class="w-full max-w-md flex flex-col items-center text-center py-10">
+            <img src="icons/logo.png" alt="" width="80" height="80" class="w-20 h-20 rounded-2xl shadow-2xl ring-1 ring-slate-600">
+            <h1 class="mt-4 text-3xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">RosterIQ</h1>
+            <p class="mt-1 text-sm text-slate-400">Start/sit help and lineup fixes for your Sleeper leagues</p>
+            <p class="mt-8 text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Choose a sport</p>
+            <div class="mt-4 grid grid-cols-2 gap-4 w-full">
+                <button id="landing-nfl" onclick="chooseSport('nfl')" class="group relative aspect-square rounded-3xl bg-slate-900/80 border border-slate-700 hover:border-emerald-500 active:scale-95 transition flex flex-col items-center justify-center gap-3 text-white shadow-xl">
+                    <svg viewBox="0 0 120 120" class="w-20 h-20 sm:w-24 sm:h-24" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <g transform="translate(60 60) rotate(-35) scale(1.18)">
+                                <path d="M-48 0 C-30 -32 30 -32 48 0 C30 32 -30 32 -48 0 Z"/>
+                                <path d="M-33 -17 C-36 -6 -36 6 -33 17"/>
+                                <path d="M33 -17 C36 -6 36 6 33 17"/>
+                                <path d="M-16 0 H16"/>
+                                <path d="M-10 -5 V5 M-3.3 -5 V5 M3.3 -5 V5 M10 -5 V5" stroke-width="4"/>
+                            </g>
+                        </svg>
+                    <span class="text-xl font-black tracking-wide">NFL</span>
+                    <span class="landing-last hidden absolute top-2.5 right-2.5 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">Last used</span>
+                </button>
+                <button id="landing-nba" onclick="chooseSport('nba')" class="group relative aspect-square rounded-3xl bg-slate-900/80 border border-slate-700 hover:border-emerald-500 active:scale-95 transition flex flex-col items-center justify-center gap-3 text-white shadow-xl">
+                    <svg viewBox="0 0 120 120" class="w-20 h-20 sm:w-24 sm:h-24" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="60" cy="60" r="44"/>
+                            <path d="M60 16 V104 M16 60 H104"/>
+                            <path d="M29 29 C47 44 47 76 29 91"/>
+                            <path d="M91 29 C73 44 73 76 91 91"/>
+                        </svg>
+                    <span class="text-xl font-black tracking-wide">NBA</span>
+                    <span class="landing-last hidden absolute top-2.5 right-2.5 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">Last used</span>
+                </button>
+            </div>
+            <p class="mt-6 text-[11px] text-slate-500">Tap the logo at the top of the app to come back here.</p>
+        </div>
+    </div>
+
 
     <!-- Header Panel -->
     <header class="sticky top-0 z-30 glass-panel border-b border-slate-800">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 sm:py-0 sm:h-16 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2">
             <!-- Logo & Title -->
             <div class="flex items-center space-x-3">
-                <img src="icons/logo.png" alt="" width="44" height="44" class="w-10 h-10 sm:w-11 sm:h-11 rounded-xl shadow-lg ring-1 ring-slate-600 shrink-0">
+                <button onclick="showLanding()" class="shrink-0 rounded-xl" title="Choose sport"><img src="icons/logo.png" alt="Choose sport" width="44" height="44" class="w-10 h-10 sm:w-11 sm:h-11 rounded-xl shadow-lg ring-1 ring-slate-600"></button>
                 <div>
                     <div class="flex items-center space-x-2">
                         <span class="text-xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">RosterIQ</span>
@@ -460,7 +496,7 @@
             renderComparisonGrid();
             const savedUser = lsGet('rosteriq_user');
             if (savedUser) document.getElementById('league-username').value = savedUser;
-            Promise.resolve(loadRosterDirectory('nfl')).then(() => { if (savedUser) connectSleeper(); });
+            showLanding(); // data loads after you pick NFL or NBA
         };
 
         function switchSport(sport) {
@@ -611,7 +647,37 @@
             }
         }
 
-        function loadRosterDirectory(sport) { return fetchSleeperDirectory(sport); }
+        // One roster download per sport, even if several parts of the app ask at once
+        const dirInflight = {};
+        function loadRosterDirectory(sport) {
+            if (isCacheLoaded[sport]) return Promise.resolve();
+            if (!dirInflight[sport]) dirInflight[sport] = Promise.resolve(fetchSleeperDirectory(sport)).finally(() => { delete dirInflight[sport]; });
+            return dirInflight[sport];
+        }
+
+        // ---------- Landing page ----------
+        let appStarted = false;
+        function showLanding() {
+            const last = lsGet('rosteriq_sport');
+            document.querySelectorAll('#landing .landing-last').forEach(el => el.classList.add('hidden'));
+            if (last) document.querySelector(`#landing-${last} .landing-last`)?.classList.remove('hidden');
+            document.getElementById('landing').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+        function chooseSport(sport) {
+            lsSet('rosteriq_sport', sport);
+            document.getElementById('landing').classList.add('hidden');
+            document.body.style.overflow = '';
+            window.scrollTo(0, 0);
+            if (!appStarted) {
+                appStarted = true;
+                if (sport !== currentSport) switchSport(sport); // also starts that sport's roster download
+                else loadRosterDirectory(sport);
+                if (lsGet('rosteriq_user')) connectSleeper();
+            } else {
+                switchSport(sport);
+            }
+        }
 
         async function loadTeams(sport) {
             if (teamsCache[sport]) return teamsCache[sport];
@@ -2247,7 +2313,7 @@
                 league.sport = meta.sport;
                 league.season = meta.season;
                 if (currentSport !== meta.sport) switchSport(meta.sport);
-                if (!isCacheLoaded[meta.sport]) await fetchSleeperDirectory(meta.sport);
+                if (!isCacheLoaded[meta.sport]) await loadRosterDirectory(meta.sport);
                 const tok = league.loadSeq;
                 const [info, rosters] = await Promise.all([
                     getJSON(`${SLEEPER}/league/${leagueId}`),
