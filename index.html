@@ -474,6 +474,7 @@
             updateScoringBadge();
             if (!isCacheLoaded[sport]) loadRosterDirectory(sport);
             else updateApiStatus(`Rosters ready (${playerCache[sport].length} ${sport.toUpperCase()} players${sport === 'nfl' ? ' & D/ST' : ''})`, 'green');
+            syncLeagueToSport(sport);
         }
 
         // ---------- Sources ----------
@@ -1587,6 +1588,7 @@
         const nbaFits = (p, slot) => (p.fpos || [p.pos]).flatMap(x => NBA_POS_EXPAND[x] || [x]).some(x => NBA_SLOTS[slot].includes(x));
 
         async function buildNbaPlan() {
+            const tok = league.loadSeq;
             const season = league.season;
             setLeagueMsg('Checking this week’s NBA games...');
             delete nbaSchedCache[season]; // refresh game statuses
@@ -1688,6 +1690,7 @@
                     .sort((a, b) => b.value - a.value)[0];
                 if (best) { sl.p = best; used.add(best.pid); }
             });
+            if (tok !== league.loadSeq) return; // switched leagues/sports meanwhile
             league.plan = { sport: 'nba', lineup: lineup.sort((a, b) => a.idx - b.idx), bench: league.players.filter(p => !used.has(p.pid)) };
             league.updated = new Date();
             renderNbaPlan();
@@ -1784,7 +1787,9 @@
             btn.disabled = true;
             box.innerHTML = `<div class="text-xs text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Reading your current Sleeper lineup...</div>`;
             try {
+                const tok = league.loadSeq;
                 const rosters = await getJSON(`${SLEEPER}/league/${league.leagueId}/rosters`);
+                if (tok !== league.loadSeq) return;
                 const uid = league.user.user_id;
                 const mine = (rosters || []).find(r => r.owner_id === uid) || (rosters || []).find(r => (r.co_owners || []).includes(uid));
                 if (!mine) throw new Error('your team was not found');
@@ -1795,6 +1800,7 @@
                     box.innerHTML = `<div class="text-xs text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Your roster changed, analyzing new players...</div>`;
                     if (league.sport === 'nba') await buildNbaPlan(); else await buildLockPlan(true);
                 }
+                if (tok !== league.loadSeq) return;
                 league.fixes = computeLineupFixes();
                 renderLineupFixes();
             } catch (e) {
@@ -2180,36 +2186,74 @@
                 if (!leagues.length) throw new Error(`no NBA or NFL leagues found for ${name} this season`);
                 league.user = user;
                 league.leagues = leagues;
-                const sel = document.getElementById('league-select');
-                sel.innerHTML = leagues.map(l => `<option value="${esc(l.league_id)}">${esc(l.name)} (${l.sport.toUpperCase()})</option>`).join('');
-                const saved = lsGet('rosteriq_league');
-                sel.value = leagues.some(l => l.league_id === saved) ? saved : leagues[0].league_id;
-                document.getElementById('league-select-wrap').classList.toggle('hidden', leagues.length < 2);
-                await loadLeague(sel.value);
+                // Start with a league for the sport you're viewing, if you have one
+                const sport = leagues.some(l => l.sport === currentSport) ? currentSport : leagues[0].sport;
+                const id = pickLeagueFor(sport);
+                fillLeagueSelect(sport, id);
+                await loadLeague(id);
             } catch (e) {
                 setLeagueMsg(`Couldn't connect: ${e.message}`, true);
             }
         }
 
-        async function loadLeague(leagueId) {
-            lsSet('rosteriq_league', leagueId);
-            league.leagueId = leagueId;
-            setLeagueMsg('Loading your roster and league scoring...');
+        function pickLeagueFor(sport) {
+            const list = (league.leagues || []).filter(l => l.sport === sport);
+            if (!list.length) return null;
+            const saved = lsGet(`rosteriq_league_${sport}`) || lsGet('rosteriq_league');
+            return list.some(l => l.league_id === saved) ? saved : list[0].league_id;
+        }
+
+        function fillLeagueSelect(sport, selectedId) {
+            const list = (league.leagues || []).filter(l => l.sport === sport);
+            const sel = document.getElementById('league-select');
+            sel.innerHTML = list.map(l => `<option value="${esc(l.league_id)}">${esc(l.name)} (${l.sport.toUpperCase()})</option>`).join('');
+            if (selectedId) sel.value = selectedId;
+            document.getElementById('league-select-wrap').classList.toggle('hidden', list.length < 2);
+        }
+
+        // Clear everything shown for the previous league
+        function clearLeagueView() {
+            league.loadSeq = (league.loadSeq || 0) + 1; // any load still running for the old league is dropped
+            league.leagueId = null; league.info = null; league.roster = null;
+            league.players = []; league.plan = null; league.fixes = []; league.fixOpen = new Set(); league.fixPanelOpen = false;
             document.getElementById('league-plan').innerHTML = '';
             document.getElementById('lineup-fix').innerHTML = '';
             document.getElementById('lineup-fix-wrap').classList.add('hidden');
             document.getElementById('league-plan-wrap').classList.add('hidden');
-            league.players = [];
+            document.getElementById('league-week-badge').classList.add('hidden');
+        }
+
+        // Switching NFL <-> NBA: show that sport's league, never the other sport's info
+        function syncLeagueToSport(sport) {
+            if (!league.user || !league.leagues) return;
+            if (league.sport === sport && league.leagueId) { fillLeagueSelect(sport, league.leagueId); return; }
+            clearLeagueView();
+            league.sport = sport;
+            const id = pickLeagueFor(sport);
+            fillLeagueSelect(sport, id);
+            if (id) loadLeague(id);
+            else setLeagueMsg(`No ${sport.toUpperCase()} leagues on this Sleeper account this season.`);
+        }
+
+        async function loadLeague(leagueId) {
+            lsSet('rosteriq_league', leagueId);
+            const metaSport = (league.leagues || []).find(l => l.league_id === leagueId)?.sport;
+            if (metaSport) lsSet(`rosteriq_league_${metaSport}`, leagueId);
+            setLeagueMsg('Loading your roster and league scoring...');
+            clearLeagueView();
+            league.leagueId = leagueId;
             try {
                 const meta = (league.leagues || []).find(l => l.league_id === leagueId) || { sport: 'nfl', season: await sleeperSeasonFor('nfl') };
                 league.sport = meta.sport;
                 league.season = meta.season;
                 if (currentSport !== meta.sport) switchSport(meta.sport);
                 if (!isCacheLoaded[meta.sport]) await fetchSleeperDirectory(meta.sport);
+                const tok = league.loadSeq;
                 const [info, rosters] = await Promise.all([
                     getJSON(`${SLEEPER}/league/${leagueId}`),
                     getJSON(`${SLEEPER}/league/${leagueId}/rosters`)
                 ]);
+                if (tok !== league.loadSeq) return;
                 const uid = league.user.user_id;
                 const mine = (rosters || []).find(r => r.owner_id === uid) || (rosters || []).find(r => (r.co_owners || []).includes(uid));
                 if (!mine) throw new Error('your team was not found in this league');
@@ -2226,13 +2270,15 @@
                 recalculateScoring();
                 if (meta.sport === 'nba') await buildNbaPlan();
                 else await buildLockPlan(true);
+                if (tok !== league.loadSeq) return;
                 fixLineup();
             } catch (e) {
-                setLeagueMsg(`Couldn't load league: ${e.message}`, true);
+                if (league.leagueId === leagueId) setLeagueMsg(`Couldn't load league: ${e.message}`, true);
             }
         }
 
         async function buildLockPlan(fullReload) {
+            const tok = league.loadSeq;
             const season = league.season;
             setLeagueMsg('Checking this week’s games...');
             delete sleeperScheduleCache[season]; // refresh game statuses
@@ -2311,6 +2357,7 @@
                 }
             });
 
+            if (tok !== league.loadSeq) return; // switched leagues/sports meanwhile
             league.plan = allocateChains(league.players, league.info.roster_positions || [], starters);
             league.updated = new Date();
             renderLockPlan();
