@@ -41,7 +41,7 @@ if (schedule) {
 const payload = JSON.stringify({
     title: 'Time to lock your picks',
     body: "Open RosterIQ to see who to lock or wait on, and fix today's lineup.",
-    url: './?sport=nba'
+    url: './?tab=sleeper'
 });
 
 let sent = 0, failed = 0;
