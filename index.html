@@ -1967,45 +1967,78 @@
                     </label>`;
             };
 
-            const groupCard = (grp, gi) => `
-                <div class="p-2.5 rounded-xl bg-slate-900/70 border border-slate-800 space-y-1.5">
-                    <div class="flex items-center gap-2 text-[11px] min-w-0">
+            const keyOf = grp => `${grp.kind}-${grp.idx}`;
+            const summaryLine = grp => {
+                const pick = grp.selected >= 0 ? grp.options[grp.selected] : null;
+                const who = grp.out ? esc(grp.out.name) : 'Empty slot';
+                if (grp.kind === 'problem') {
+                    return pick
+                        ? `<span class="text-rose-300">${who}</span> <i class="fa-solid fa-arrow-right text-slate-500 mx-0.5"></i> <span class="text-emerald-300">${esc(pick.p.name)}</span>`
+                        : `<span class="text-rose-300">${who}</span> <span class="text-slate-500">${grp.options.length ? '· keeping' : '· no bench option'}</span>`;
+                }
+                const best = grp.options[0];
+                const shown = pick || best;
+                const gain = grp.kind === 'tonight' ? `proj ${shown.score.toFixed(1)}` : `+${shown.gain.toFixed(1)}`;
+                return `<span class="text-slate-300">${who}</span> <i class="fa-solid fa-arrow-right text-slate-500 mx-0.5"></i> <span class="${pick ? 'text-emerald-300' : 'text-slate-400'}">${esc(shown.p.name)}</span> <span class="text-emerald-400 font-bold">${gain}</span>`;
+            };
+            const groupCard = (grp, gi) => {
+                const key = keyOf(grp);
+                const n = grp.options.length;
+                return `
+                <details ${league.fixOpen.has(key) ? 'open' : ''} ontoggle="setFixOpen('${key}', this.open)" class="group rounded-lg bg-slate-900/70 border ${grp.selected >= 0 ? 'border-emerald-500/40' : 'border-slate-800'}">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-2 text-[11px] min-w-0">
                         ${chip(grp.slot)}
-                        ${grp.kind === 'problem'
-                            ? `<span class="min-w-0 text-rose-300"><strong>${grp.out ? 'Bench' : 'Fill'}:</strong> ${grp.out ? `${esc(grp.out.name)} <span class="text-rose-300/70">(${esc(grp.reason)})</span>` : 'empty slot'}</span>`
-                            : grp.kind === 'tonight'
-                            ? `<span class="min-w-0 text-slate-300"><strong>Starter:</strong> ${esc(grp.out.name)} <span class="text-slate-400">no game ${grp.isToday ? 'tonight' : esc(day(grp.date))}${grp.starterNext ? `, next ${esc(day(grp.starterNext))}` : ''}</span></span>`
-                            : `<span class="min-w-0 text-slate-300"><strong>Starter:</strong> ${esc(grp.out.name)} <span class="text-slate-400">proj ${grp.outMu.toFixed(1)} on ${esc(day(grp.date))}</span></span>`}
+                        <span class="flex-1 min-w-0 truncate">${summaryLine(grp)}</span>
+                        ${n > 1 ? `<span class="shrink-0 text-[10px] text-slate-500">${n}</span>` : ''}
+                        <i class="fa-solid fa-chevron-down shrink-0 text-slate-500 text-[10px] transition group-open:rotate-180"></i>
+                    </summary>
+                    <div class="px-2 pb-2 space-y-1.5">
+                        <div class="text-[11px] ${grp.kind === 'problem' ? 'text-rose-300/80' : 'text-slate-400'}">
+                            ${grp.kind === 'problem' ? (grp.out ? esc(grp.reason) : 'This slot is empty.')
+                                : grp.kind === 'tonight' ? `${esc(grp.out.name)} has no game ${grp.isToday ? 'tonight' : esc(day(grp.date))}${grp.starterNext ? ` (next ${esc(day(grp.starterNext))})` : ''}. Move him back after.`
+                                : `${esc(grp.out.name)} projects ${grp.outMu.toFixed(1)} on ${esc(day(grp.date))}.`}
+                        </div>
+                        ${n ? grp.options.map((o, oi) => optionRow(gi, grp, o, oi)).join('') : `<div class="text-[11px] text-slate-400">No eligible bench player with a game. Check the waiver wire.</div>`}
                     </div>
-                    ${grp.options.length
-                        ? `<div class="text-[10px] uppercase tracking-wide font-bold text-slate-500">${grp.kind === 'problem' ? `Start instead (${grp.options.length} option${grp.options.length === 1 ? '' : 's'})` : grp.kind === 'tonight' ? `Plays ${grp.isToday ? 'tonight' : esc(day(grp.date))} (${grp.options.length})` : `Better that day (${grp.options.length})`}</div>
-                           ${grp.options.map((o, oi) => optionRow(gi, grp, o, oi)).join('')}`
-                        : `<div class="text-[11px] text-slate-400">No eligible bench player with a game. Check the waiver wire.</div>`}
-                </div>`;
+                </details>`;
+            };
 
             const problems = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'problem');
             const upgrades = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'upgrade');
             const tonight = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'tonight');
             const tonightWord = !tonight.length ? '' : tonight[0][0].isToday ? 'tonight' : `on ${day(tonight[0][0].date)}`;
             const nSel = groups.filter(g => g.selected >= 0).length;
+            const section = (label, color, icon, list) => list.length ? `
+                <div class="pt-1 text-[11px] font-bold ${color}"><i class="fa-solid ${icon} mr-1"></i>${label}</div>
+                ${list.map(([g, i]) => groupCard(g, i)).join('')}` : '';
+            const parts = [
+                problems.length ? `${problems.length} problem${problems.length === 1 ? '' : 's'}` : '',
+                tonight.length ? `${tonight.length} open ${tonightWord}` : '',
+                upgrades.length ? `${upgrades.length} upgrade${upgrades.length === 1 ? '' : 's'}` : ''
+            ].filter(Boolean).join(' · ');
+
             box.innerHTML = `
-                <div class="p-3 rounded-xl bg-slate-900/80 border ${problems.length ? 'border-amber-800/60' : 'border-slate-700'} space-y-2">
-                    <div class="flex items-center justify-between gap-2">
-                        <div class="font-bold text-sm ${problems.length ? 'text-amber-200' : 'text-emerald-200'}"><i class="fa-solid ${problems.length ? 'fa-triangle-exclamation' : 'fa-circle-check'} mr-1"></i>${problems.length ? `${problems.length} lineup ${problems.length === 1 ? 'problem' : 'problems'}` : 'No lineup problems'}</div>
-                        <div class="text-[11px] text-slate-400">${nSel ? `${nSel} swap${nSel === 1 ? '' : 's'} to make` : 'No swaps selected'}</div>
+                <details ${league.fixPanelOpen ? 'open' : ''} ontoggle="league.fixPanelOpen = this.open" class="group/panel rounded-xl bg-slate-900/80 border ${problems.length ? 'border-amber-800/60' : 'border-slate-700'}">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid ${problems.length ? 'fa-triangle-exclamation text-amber-300' : 'fa-circle-check text-emerald-300'}"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold ${problems.length ? 'text-amber-200' : 'text-emerald-200'} truncate">Lineup fixes</div>
+                            <div class="text-[11px] text-slate-400">${parts ? `${parts} · ` : ''}${nSel ? `${nSel} swap${nSel === 1 ? '' : 's'} selected` : 'no swaps selected'}</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/panel:rotate-180"></i>
+                    </summary>
+                    <div class="px-3 pb-3 space-y-1.5">
+                        <div class="text-[11px] text-slate-500">Tap a slot to see every option. Checked swaps are the ones to make.</div>
+                        ${section(`Lineup problems`, 'text-amber-300', 'fa-triangle-exclamation', problems)}
+                        ${section(`Play ${esc(tonightWord)} (starter has no game)`, 'text-violet-300', 'fa-moon', tonight)}
+                        ${section(`Upgrades (same day, higher projection)`, 'text-cyan-300', 'fa-arrow-trend-up', upgrades)}
                     </div>
-                    ${problems.length ? `<div class="text-[11px] text-slate-400">The best option is checked. Pick a different one, or uncheck to keep your starter (for example, one you're locking).</div>${problems.map(([g, i]) => groupCard(g, i)).join('')}` : ''}
-                    ${tonight.length ? `
-                        <div class="pt-1 text-xs font-bold text-violet-300"><i class="fa-solid fa-moon mr-1"></i>Play ${esc(tonightWord)} · ${tonight.length} open slot${tonight.length === 1 ? '' : 's'}</div>
-                        <div class="text-[11px] text-slate-400">These starters don't play ${esc(tonightWord)}, so their slot sits empty. Start a bench player who does, then move your starter back before his next game.</div>
-                        ${tonight.map(([g, i]) => groupCard(g, i)).join('')}` : ''}
-                    ${upgrades.length ? `
-                        <div class="pt-1 text-xs font-bold text-cyan-300"><i class="fa-solid fa-arrow-trend-up mr-1"></i>Possible upgrades · ${upgrades.length} slot${upgrades.length === 1 ? '' : 's'}</div>
-                        <div class="text-[11px] text-slate-400">Every bench player who plays the same day as your starter, fits the slot, and projects higher. Check any you want.</div>
-                        ${upgrades.map(([g, i]) => groupCard(g, i)).join('')}` : ''}
-                    <div class="text-[11px] text-slate-400">Make the checked swaps in Sleeper, then tap <strong>Check again</strong> to confirm.</div>
-                    <div class="flex gap-2">${openBtn}${againBtn}</div>
-                </div>`;
+                </details>
+                <div class="flex gap-2 mt-2">${openBtn}${againBtn}</div>`;
+        }
+
+        function setFixOpen(key, open) {
+            if (open) league.fixOpen.add(key); else league.fixOpen.delete(key);
         }
 
         function refreshLeague() {
@@ -2027,7 +2060,7 @@
         const SLOT_NAMES = { DEF: 'D/ST', FLEX: 'FLEX', WRRB_FLEX: 'W/R FLEX', REC_FLEX: 'W/T FLEX', SUPER_FLEX: 'SUPERFLEX' };
         const OUT_STATUS = /^(out|ir|injured reserve|suspended|pup|na|cov)/i;
 
-        const league = { user: null, leagueId: null, info: null, roster: null, season: null, week: null, players: [], plan: null, timesKnown: false, updated: null, fixes: [] };
+        const league = { user: null, leagueId: null, info: null, roster: null, season: null, week: null, players: [], plan: null, timesKnown: false, updated: null, fixes: [], fixOpen: new Set(), fixPanelOpen: false };
 
         function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
         function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } }
