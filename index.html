@@ -1578,7 +1578,8 @@
             PG: ['PG'], SG: ['SG'], SF: ['SF'], PF: ['PF'], C: ['C'],
             G: ['PG', 'SG'], F: ['SF', 'PF'], UTIL: ['PG', 'SG', 'SF', 'PF', 'C']
         };
-        const nbaFits = (p, slot) => (p.fpos || [p.pos]).some(x => NBA_SLOTS[slot].includes(x));
+        const NBA_POS_EXPAND = { G: ['PG', 'SG'], F: ['SF', 'PF'] };
+        const nbaFits = (p, slot) => (p.fpos || [p.pos]).flatMap(x => NBA_POS_EXPAND[x] || [x]).some(x => NBA_SLOTS[slot].includes(x));
 
         async function buildNbaPlan() {
             const season = league.season;
@@ -1806,9 +1807,18 @@
             const byPid = {};
             league.players.forEach(p => { byPid[p.pid] = p; });
 
+            const slotOk = slot => !!(nba ? NBA_SLOTS[slot] : SLOT_ELIGIBLE[slot]);
             const fits = (p, slot) => nba ? (!!NBA_SLOTS[slot] && nbaFits(p, slot)) : (SLOT_ELIGIBLE[slot] || []).includes(p.pos);
             const plays = p => !p.unavailable && (nba ? p.gamesLeft > 0 : (!!p.game && p.status === 'pre_game'));
             const worth = p => nba ? (p.value || 0) : (p.mu || 0);
+            const bench = league.players.filter(p => !starterSet.has(p.pid) && !parked.has(p.pid) && plays(p));
+
+            // Projection for one specific day: NBA uses that date's game, NFL his game this week
+            const projOn = (p, date) => {
+                if (nba) { const g = (p.games || []).find(x => !x.done && x.date === date); return g ? g.mu : null; }
+                return p.game && p.status === 'pre_game' && p.game.date === date ? (p.mu || 0) : null;
+            };
+            const nextDate = p => nba ? (p.games || []).find(x => !x.done)?.date : (p.game && p.status === 'pre_game' ? p.game.date : null);
 
             const problemOf = pid => {
                 if (!pid || pid === '0') return 'empty slot';
@@ -1830,72 +1840,62 @@
                 return null;
             };
 
-            const flagged = positions.map((slot, i) => ({ slot, idx: i, pid: starters[i], reason: problemOf(starters[i]) }))
-                .filter(x => x.reason && (nba ? NBA_SLOTS[x.slot] : SLOT_ELIGIBLE[x.slot]));
-            const used = new Set();
-            const elig = slot => (nba ? NBA_SLOTS[slot] : SLOT_ELIGIBLE[slot]).length;
-            [...flagged].sort((a, b) => elig(a.slot) - elig(b.slot)).forEach(f => {
-                const best = league.players
-                    .filter(p => !starterSet.has(p.pid) && !parked.has(p.pid) && !used.has(p.pid) && plays(p) && fits(p, f.slot))
-                    .sort((a, b) => worth(b) - worth(a))[0];
-                if (best) { f.in = best; used.add(best.pid); }
-                f.out = byPid[f.pid] || null;
-                f.keep = !!(nba && f.out && f.out.gamesLeft === 0 && f.out.games.some(g => g.done && !g.benched));
-                // default: make the swap, unless he may be your locked score or still out-values the replacement
-                f.checked = !!f.in && !f.keep && (!f.out || !f.out.games || f.out.gamesLeft === 0 || worth(f.in) > worth(f.out));
+            const groups = [];
+            positions.forEach((slot, idx) => {
+                if (!slotOk(slot)) return;
+                const pid = starters[idx];
+                const reason = problemOf(pid);
+                const out = byPid[pid] || null;
+                if (reason) {
+                    const options = bench.filter(p => fits(p, slot)).map(p => ({ p, score: worth(p) })).sort((a, b) => b.score - a.score);
+                    const keep = !!(nba && out && out.gamesLeft === 0 && out.games.some(g => g.done && !g.benched));
+                    const swapByDefault = options.length && !keep && (!out || !out.games || out.gamesLeft === 0 || options[0].score > worth(out));
+                    groups.push({ kind: 'problem', slot, idx, out, reason, options, selected: swapByDefault ? 0 : -1 });
+                    return;
+                }
+                const date = out && nextDate(out);
+                if (!date) return;
+                const outMu = projOn(out, date) ?? 0;
+                const options = bench.filter(p => fits(p, slot))
+                    .map(p => ({ p, score: projOn(p, date) }))
+                    .filter(o => o.score != null && o.score - outMu > 0.1)
+                    .map(o => ({ ...o, gain: o.score - outMu }))
+                    .sort((a, b) => b.gain - a.gain);
+                if (options.length) groups.push({ kind: 'upgrade', slot, idx, out, date, outMu, options, selected: -1 });
             });
 
-            // Possible upgrades: a bench player who plays the SAME DAY as a starter,
-            // fits that slot, and projects higher for that game
-            const nextProj = p => {
-                if (nba) {
-                    const g = (p.games || []).find(x => !x.done);
-                    return g ? { date: g.date, mu: g.mu } : null;
-                }
-                return p.game && p.status === 'pre_game' ? { date: p.game.date, mu: p.mu || 0 } : null;
-            };
-            const flaggedIdx = new Set(flagged.map(f => f.idx));
-            const pairs = [];
-            positions.forEach((slot, i) => {
-                if (flaggedIdx.has(i) || !(nba ? NBA_SLOTS[slot] : SLOT_ELIGIBLE[slot])) return;
-                const st = byPid[starters[i]];
-                const sd = st && nextProj(st);
-                if (!sd) return;
-                league.players.forEach(b => {
-                    if (starterSet.has(b.pid) || parked.has(b.pid) || used.has(b.pid) || !plays(b) || !fits(b, slot)) return;
-                    const bd = nextProj(b);
-                    if (!bd || bd.date !== sd.date) return;
-                    const gain = bd.mu - sd.mu;
-                    if (gain >= 1) pairs.push({ slot, idx: i, out: st, in: b, gain, date: sd.date, outMu: sd.mu, inMu: bd.mu });
-                });
+            // A bench player can only fill one slot: settle default picks, most restrictive slots first
+            const elig = slot => (nba ? NBA_SLOTS[slot] : SLOT_ELIGIBLE[slot]).length;
+            const taken = new Set();
+            [...groups].filter(g => g.selected >= 0).sort((a, b) => elig(a.slot) - elig(b.slot)).forEach(g => {
+                const k = g.options.findIndex(o => !taken.has(o.p.pid));
+                g.selected = k;
+                if (k >= 0) taken.add(g.options[k].p.pid);
             });
-            const upgrades = [];
-            const slotTaken = new Set();
-            pairs.sort((a, b) => b.gain - a.gain).forEach(u => {
-                if (slotTaken.has(u.idx) || used.has(u.in.pid)) return;
-                slotTaken.add(u.idx); used.add(u.in.pid);
-                upgrades.push({ ...u, upgrade: true, checked: false });
-            });
-            return flagged.concat(upgrades);
+            return groups;
         }
 
-        function toggleFix(i, on) {
-            if (league.fixes[i]) league.fixes[i].checked = on;
-            const n = league.fixes.filter(f => f.checked && f.in).length;
-            const el = document.getElementById('fix-count');
-            if (el) el.textContent = n ? `${n} swap${n === 1 ? '' : 's'} to make in Sleeper` : 'No swaps selected';
+        // Check one option in a slot; unchecks other options there and the same player elsewhere
+        function toggleFix(g, o, on) {
+            const groups = league.fixes;
+            const grp = groups[g];
+            if (!grp) return;
+            if (on) {
+                grp.selected = o;
+                const pid = grp.options[o].p.pid;
+                groups.forEach((x, j) => { if (j !== g && x.selected >= 0 && x.options[x.selected].p.pid === pid) x.selected = -1; });
+            } else if (grp.selected === o) grp.selected = -1;
+            renderLineupFixes();
         }
 
         function renderLineupFixes() {
             const box = document.getElementById('lineup-fix');
             const nba = league.sport === 'nba';
-            const fixes = league.fixes;
+            const groups = league.fixes;
             const sleeperUrl = `https://sleeper.com/leagues/${encodeURIComponent(league.leagueId)}/team`;
             const openBtn = `<a href="${sleeperUrl}" target="_blank" rel="noopener" class="flex-1 text-center py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Sleeper</a>`;
             const againBtn = `<button onclick="fixLineup()" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition"><i class="fa-solid fa-rotate mr-1 text-emerald-400"></i>Check again</button>`;
-            const problems = fixes.map((f, i) => ({ f, i })).filter(x => !x.f.upgrade);
-            const upgrades = fixes.map((f, i) => ({ f, i })).filter(x => x.f.upgrade);
-            if (!fixes.length) {
+            if (!groups.length) {
                 box.innerHTML = `
                     <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 space-y-2">
                         <div><i class="fa-solid fa-circle-check mr-1"></i>Every starter has a game ${nba ? 'left this week' : 'this week'}, and no bench player playing the same day projects higher. Nothing to swap.</div>
@@ -1903,50 +1903,70 @@
                     </div>`;
                 return;
             }
-            const nextGame = p => {
-                if (nba) {
-                    const nx = p.games.find(g => !g.done);
-                    return `${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left${nx ? ` · next ${fmtDate(`${nx.date}T12:00:00`)} ${nx.home ? 'vs' : '@'} ${nx.opp}` : ''}`;
-                }
-                return kickLabel(p);
+            const day = d => fmtDate(`${d}T12:00:00`);
+            const gamesInfo = p => {
+                if (!nba) return kickLabel(p);
+                const nx = p.games.find(g => !g.done);
+                return `${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left${nx ? ` · next ${day(nx.date)} ${nx.home ? 'vs' : '@'} ${nx.opp}` : ''}`;
+            };
+            const pickedElsewhere = (gi, pid) => {
+                const j = groups.findIndex((x, k) => k !== gi && x.selected >= 0 && x.options[x.selected].p.pid === pid);
+                return j >= 0 ? (SLOT_NAMES[groups[j].slot] || groups[j].slot) : null;
             };
             const chip = slot => `<span class="inline-block px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-extrabold text-emerald-400">${esc(SLOT_NAMES[slot] || slot)}</span>`;
-            const box_ = (i, f, body, disabled) => `
-                <label class="flex items-start gap-2.5 p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 ${disabled ? 'opacity-80' : 'cursor-pointer'}">
-                    <input type="checkbox" ${f.checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleFix(${i}, this.checked)" class="mt-0.5 w-5 h-5 shrink-0 accent-emerald-500">
-                    <div class="flex-1 min-w-0 text-[11px] space-y-1">${body}</div>
-                </label>`;
-            const problemRow = ({ f, i }) => box_(i, f, `
-                ${chip(f.slot)}
-                <div class="text-rose-300"><strong>${f.out ? 'Bench' : 'Fill'}:</strong> ${f.out ? `${esc(f.out.name)} <span class="text-rose-300/70">(${esc(f.reason)})</span>` : 'empty slot'}</div>
-                ${f.in
-                    ? `<div class="text-emerald-300"><strong>Start:</strong> ${esc(f.in.name)} <span class="text-slate-400">${esc(f.in.team)} ${esc((f.in.fpos || [f.in.pos]).join('/'))} · ${esc(nextGame(f.in))} · ${nba ? 'exp' : 'proj'} ${(nba ? f.in.value : f.in.mu).toFixed(1)}</span></div>`
-                    : `<div class="text-slate-400">No eligible bench player with a game. Check the waiver wire.</div>`}`, !f.in);
-            const upgradeRow = ({ f, i }) => {
-                const day = fmtDate(`${f.date}T12:00:00`);
-                const extra = nba && f.out.gamesLeft > f.in.gamesLeft
-                    ? `<div class="text-amber-300/90">Heads up: ${esc(f.out.name)} has ${f.out.gamesLeft} games left vs ${f.in.gamesLeft} for ${esc(f.in.name)}.</div>` : '';
-                return box_(i, f, `
-                    <div class="flex items-center justify-between gap-2">${chip(f.slot)}<span class="font-extrabold text-emerald-400">+${f.gain.toFixed(1)} pts</span></div>
-                    <div class="text-slate-300"><strong>Bench:</strong> ${esc(f.out.name)} <span class="text-slate-400">proj ${f.outMu.toFixed(1)} on ${esc(day)}</span></div>
-                    <div class="text-emerald-300"><strong>Start:</strong> ${esc(f.in.name)} <span class="text-slate-400">${esc(f.in.team)} ${esc((f.in.fpos || [f.in.pos]).join('/'))} · proj ${f.inMu.toFixed(1)} on ${esc(day)}, same day</span></div>
-                    ${extra}`, false);
+
+            const optionRow = (gi, grp, o, oi) => {
+                const p = o.p;
+                const on = grp.selected === oi;
+                const elsewhere = pickedElsewhere(gi, p.pid);
+                const detail = grp.kind === 'upgrade'
+                    ? `proj ${o.score.toFixed(1)} on ${esc(day(grp.date))} <strong class="text-emerald-400">+${o.gain.toFixed(1)}</strong>${nba ? ` · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left` : ''}`
+                    : `${esc(gamesInfo(p))} · ${nba ? 'exp' : 'proj'} <strong class="text-emerald-400">${o.score.toFixed(1)}</strong>`;
+                const warn = grp.kind === 'upgrade' && nba && grp.out.gamesLeft > p.gamesLeft
+                    ? `<div class="text-amber-300/90">${esc(grp.out.name)} has ${grp.out.gamesLeft} games left vs ${p.gamesLeft}.</div>` : '';
+                return `
+                    <label class="flex items-start gap-2.5 p-2 rounded-lg ${on ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-slate-950/60 border-slate-800'} border cursor-pointer">
+                        <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleFix(${gi}, ${oi}, this.checked)" class="mt-0.5 w-5 h-5 shrink-0 accent-emerald-500">
+                        <div class="flex-1 min-w-0 text-[11px]">
+                            <div class="text-slate-100"><strong>${esc(p.name)}</strong> <span class="text-slate-400">${esc(p.team)} ${esc((p.fpos || [p.pos]).join('/'))}</span>${oi === 0 ? ' <span class="ml-1 px-1.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-extrabold">BEST</span>' : ''}</div>
+                            <div class="text-slate-400">${detail}</div>
+                            ${warn}
+                            ${elsewhere ? `<div class="text-slate-500">Picked for ${esc(elsewhere)}; checking here moves him.</div>` : ''}
+                        </div>
+                    </label>`;
             };
+
+            const groupCard = (grp, gi) => `
+                <div class="p-2.5 rounded-xl bg-slate-900/70 border border-slate-800 space-y-1.5">
+                    <div class="flex items-center gap-2 text-[11px] min-w-0">
+                        ${chip(grp.slot)}
+                        ${grp.kind === 'problem'
+                            ? `<span class="min-w-0 text-rose-300"><strong>${grp.out ? 'Bench' : 'Fill'}:</strong> ${grp.out ? `${esc(grp.out.name)} <span class="text-rose-300/70">(${esc(grp.reason)})</span>` : 'empty slot'}</span>`
+                            : `<span class="min-w-0 text-slate-300"><strong>Starter:</strong> ${esc(grp.out.name)} <span class="text-slate-400">proj ${grp.outMu.toFixed(1)} on ${esc(day(grp.date))}</span></span>`}
+                    </div>
+                    ${grp.options.length
+                        ? `<div class="text-[10px] uppercase tracking-wide font-bold text-slate-500">${grp.kind === 'problem' ? `Start instead (${grp.options.length} option${grp.options.length === 1 ? '' : 's'})` : `Better that day (${grp.options.length})`}</div>
+                           ${grp.options.map((o, oi) => optionRow(gi, grp, o, oi)).join('')}`
+                        : `<div class="text-[11px] text-slate-400">No eligible bench player with a game. Check the waiver wire.</div>`}
+                </div>`;
+
+            const problems = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'problem');
+            const upgrades = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'upgrade');
+            const nSel = groups.filter(g => g.selected >= 0).length;
             box.innerHTML = `
                 <div class="p-3 rounded-xl bg-slate-900/80 border ${problems.length ? 'border-amber-800/60' : 'border-slate-700'} space-y-2">
                     <div class="flex items-center justify-between gap-2">
                         <div class="font-bold text-sm ${problems.length ? 'text-amber-200' : 'text-emerald-200'}"><i class="fa-solid ${problems.length ? 'fa-triangle-exclamation' : 'fa-circle-check'} mr-1"></i>${problems.length ? `${problems.length} lineup ${problems.length === 1 ? 'problem' : 'problems'}` : 'No lineup problems'}</div>
-                        <div id="fix-count" class="text-[11px] text-slate-400"></div>
+                        <div class="text-[11px] text-slate-400">${nSel ? `${nSel} swap${nSel === 1 ? '' : 's'} to make` : 'No swaps selected'}</div>
                     </div>
-                    ${problems.length ? `<div class="text-[11px] text-slate-400">Uncheck any swap you want to skip, for example to keep a player you're locking.</div>${problems.map(problemRow).join('')}` : ''}
+                    ${problems.length ? `<div class="text-[11px] text-slate-400">The best option is checked. Pick a different one, or uncheck to keep your starter (for example, one you're locking).</div>${problems.map(([g, i]) => groupCard(g, i)).join('')}` : ''}
                     ${upgrades.length ? `
-                        <div class="pt-1 text-xs font-bold text-cyan-300"><i class="fa-solid fa-arrow-trend-up mr-1"></i>Possible upgrades (${upgrades.length}) · same day, higher projection</div>
-                        <div class="text-[11px] text-slate-400">Check any you want to make.</div>
-                        ${upgrades.map(upgradeRow).join('')}` : ''}
+                        <div class="pt-1 text-xs font-bold text-cyan-300"><i class="fa-solid fa-arrow-trend-up mr-1"></i>Possible upgrades · ${upgrades.length} slot${upgrades.length === 1 ? '' : 's'}</div>
+                        <div class="text-[11px] text-slate-400">Every bench player who plays the same day as your starter, fits the slot, and projects higher. Check any you want.</div>
+                        ${upgrades.map(([g, i]) => groupCard(g, i)).join('')}` : ''}
                     <div class="text-[11px] text-slate-400">Make the checked swaps in Sleeper, then tap <strong>Check again</strong> to confirm.</div>
                     <div class="flex gap-2">${openBtn}${againBtn}</div>
                 </div>`;
-            toggleFix(-1);
         }
 
         function refreshLeague() {
