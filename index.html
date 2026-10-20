@@ -169,7 +169,12 @@
                 </button>
                 <div id="lineup-fix"></div>
             </div>
-            <div id="league-plan" class="space-y-3"></div>
+            <details id="league-plan-wrap" class="hidden group">
+                <summary class="cursor-pointer list-none text-[11px] font-semibold text-slate-500 hover:text-slate-300 select-none">
+                    <i class="fa-solid fa-chevron-right mr-1 transition group-open:rotate-90"></i>Weekly lock plan (game-by-game)
+                </summary>
+                <div id="league-plan" class="space-y-3 mt-3"></div>
+            </details>
         </section>
 
         <!-- Player Selection Cards Row (3 Slots) -->
@@ -1695,6 +1700,7 @@
             badge.textContent = `NBA Week ${league.week}`;
             badge.classList.remove('hidden');
             document.getElementById('lineup-fix-wrap').classList.remove('hidden');
+            document.getElementById('league-plan-wrap').classList.remove('hidden');
             const { lineup, bench } = league.plan;
             if (!lineup.length) { el.innerHTML = `<div class="text-xs text-slate-400">No lineup slots found for this league.</div>`; return; }
             const total = lineup.reduce((a, sl) => a + (sl.p ? sl.p.value : 0), 0);
@@ -2159,6 +2165,7 @@
             document.getElementById('league-plan').innerHTML = '';
             document.getElementById('lineup-fix').innerHTML = '';
             document.getElementById('lineup-fix-wrap').classList.add('hidden');
+            document.getElementById('league-plan-wrap').classList.add('hidden');
             league.players = [];
             try {
                 const meta = (league.leagues || []).find(l => l.league_id === leagueId) || { sport: 'nfl', season: await sleeperSeasonFor('nfl') };
@@ -2186,6 +2193,7 @@
                 recalculateScoring();
                 if (meta.sport === 'nba') await buildNbaPlan();
                 else await buildLockPlan(true);
+                fixLineup();
             } catch (e) {
                 setLeagueMsg(`Couldn't load league: ${e.message}`, true);
             }
@@ -2366,6 +2374,7 @@
             badge.textContent = `Week ${league.week}`;
             badge.classList.remove('hidden');
             document.getElementById('lineup-fix-wrap').classList.remove('hidden');
+            document.getElementById('league-plan-wrap').classList.remove('hidden');
             const plan = league.plan;
             if (!plan || !plan.chains.length) { el.innerHTML = `<div class="text-xs text-slate-400">No lineup slots found for this league.</div>`; return; }
 

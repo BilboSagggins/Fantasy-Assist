@@ -1,6 +1,6 @@
 // RosterIQ service worker: makes the site installable and opens instantly.
 // Bump VERSION whenever index.html changes so phones pick up the update.
-const VERSION = 'rosteriq-v8';
+const VERSION = 'rosteriq-v9';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/logo.png'];
 const STATIC_HOSTS = ['cdn.tailwindcss.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
