@@ -1,19 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#059669"/><stop offset="1" stop-color="#14b8a6"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#bg)"/><g transform="translate(20.47999999999999 20.47999999999999) scale(0.92)"><g id="art">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#0b0f17"/><g transform="translate(25.599999999999994 25.599999999999994) scale(0.9)">
+<g fill="none" stroke="#ffffff" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
   <!-- basketball -->
-  <g transform="translate(318 300)">
-    <circle r="132" fill="#f97316" stroke="#431407" stroke-width="10"/>
-    <path d="M0 -132 V132 M-132 0 H132" stroke="#431407" stroke-width="9" fill="none"/>
-    <path d="M-93 -93 C-40 -40 -40 40 -93 93 M93 -93 C40 -40 40 40 93 93" stroke="#431407" stroke-width="9" fill="none"/>
-    <ellipse cx="-38" cy="-62" rx="34" ry="18" fill="#fdba74" opacity=".45" transform="rotate(-35 -38 -62)"/>
+  <g transform="translate(212 206)">
+    <circle r="108"/>
+    <path d="M0 -108 V108"/>
+    <path d="M-108 0 H108"/>
+    <path d="M-76 -77 C-30 -40 -30 40 -76 77"/>
+    <path d="M76 -77 C30 -40 30 40 76 77"/>
   </g>
-  <!-- football -->
-  <g transform="translate(196 222) rotate(-35)">
-    <ellipse rx="138" ry="80" fill="#9a3412" stroke="#2a0e02" stroke-width="10"/>
-    <path d="M-138 0 C-100 -48 100 -48 138 0" fill="none" stroke="#c2410c" stroke-width="0"/>
-    <path d="M-92 -58 C-100 -20 -100 20 -92 58 M92 -58 C100 -20 100 20 92 58" stroke="#fff" stroke-width="11" fill="none" stroke-linecap="round"/>
-    <path d="M-44 0 H44" stroke="#fff" stroke-width="10" stroke-linecap="round"/>
-    <path d="M-30 -15 V15 M-10 -15 V15 M10 -15 V15 M30 -15 V15" stroke="#fff" stroke-width="9" stroke-linecap="round"/>
-    <ellipse cx="-40" cy="-40" rx="46" ry="14" fill="#fb923c" opacity=".35"/>
+  <!-- football (solid backing hides the basketball behind it) -->
+  <g transform="translate(316 326) rotate(-32)">
+    <path d="M-130 0 C-80 -86 80 -86 130 0 C80 86 -80 86 -130 0 Z" fill="#0b0f17" stroke="#0b0f17" stroke-width="45"/>
+    <path d="M-130 0 C-80 -86 80 -86 130 0 C80 86 -80 86 -130 0 Z"/>
+    <path d="M-88 -44 C-96 -14 -96 14 -88 44"/>
+    <path d="M88 -44 C96 -14 96 14 88 44"/>
+    <path d="M-42 0 H42"/>
+    <path d="M-27 -14 V14 M-9 -14 V14 M9 -14 V14 M27 -14 V14" stroke-width="12"/>
   </g>
-</g>
-</g></svg>
+</g></g></svg>
