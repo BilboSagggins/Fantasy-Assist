@@ -1933,6 +1933,12 @@
                 return null;
             };
 
+            // NBA: you can only change today's and tomorrow's lineups, so only look at those two days
+            const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const now = new Date(), tmr = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+            const windowDays = [{ date: ymd(now), label: 'Today' }, { date: ymd(tmr), label: 'Tomorrow' }];
+            const windowGame = p => { for (const w of windowDays) { const mu = projOn(p, w.date); if (mu != null) return { ...w, mu }; } return null; };
+
             const groups = [];
             positions.forEach((slot, idx) => {
                 if (!slotOk(slot)) return;
@@ -1940,12 +1946,22 @@
                 const reason = problemOf(pid);
                 const out = byPid[pid] || null;
                 if (reason) {
-                    const options = bench.filter(p => fits(p, slot)).map(p => ({ p, score: worth(p) })).sort((a, b) => b.score - a.score);
-                    const keep = !!(nba && out && out.gamesLeft === 0 && out.games.some(g => g.done && !g.benched));
-                    const swapByDefault = options.length && !keep && (!out || !out.games || out.gamesLeft === 0 || options[0].score > worth(out));
+                    let options, swapByDefault;
+                    if (nba) {
+                        options = bench.filter(p => fits(p, slot))
+                            .map(p => { const w = windowGame(p); return w ? { p, score: w.mu, date: w.date, dayLabel: w.label } : null; })
+                            .filter(Boolean).sort((a, b) => b.score - a.score);
+                        const keep = !!(out && out.gamesLeft === 0 && out.games.some(g => g.done && !g.benched));
+                        const outW = out && windowGame(out);
+                        swapByDefault = options.length && !keep && (!outW || options[0].score > outW.mu);
+                    } else {
+                        options = bench.filter(p => fits(p, slot)).map(p => ({ p, score: worth(p) })).sort((a, b) => b.score - a.score);
+                        swapByDefault = options.length && (!out || options[0].score > worth(out) || !out.game);
+                    }
                     groups.push({ kind: 'problem', slot, idx, out, reason, options, selected: swapByDefault ? 0 : -1 });
                     return;
                 }
+                if (nba) return; // NBA open slots and upgrades are checked day by day below
                 const date = out && nextDate(out);
                 if (!date) return;
                 const outMu = projOn(out, date) ?? 0;
@@ -1957,25 +1973,25 @@
                 if (options.length) groups.push({ kind: 'upgrade', slot, idx, out, date, outMu, options, selected: -1 });
             });
 
-            // Play tonight (NBA): a starter with no game today leaves his slot empty today.
-            // Any bench player who plays today and fits can use it; move the starter back for his next game.
+            // NBA, today and tomorrow: a starter with no game that day leaves the slot open,
+            // and a bench player with a better projection that day is an upgrade
             if (nba) {
-                const d = new Date();
-                const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                const openDates = [...new Set(league.players.flatMap(p => (p.games || []).filter(isOpen).map(g => g.date)))].sort();
-                const D = openDates.includes(todayStr) ? todayStr : openDates[0];
                 const problemIdx = new Set(groups.filter(g => g.kind === 'problem').map(g => g.idx));
-                if (D) positions.forEach((slot, idx) => {
+                windowDays.forEach(({ date, label }) => positions.forEach((slot, idx) => {
                     if (!slotOk(slot) || problemIdx.has(idx)) return;
                     const st = byPid[starters[idx]];
-                    if (!st || projOn(st, D) != null) return; // he plays that day: covered by upgrades
-                    const options = bench.filter(p => fits(p, slot))
-                        .map(p => ({ p, score: projOn(p, D) }))
-                        .filter(o => o.score != null && o.score > 0)
-                        .map(o => ({ ...o, gain: o.score }))
-                        .sort((a, b) => b.score - a.score);
-                    if (options.length) groups.push({ kind: 'tonight', slot, idx, out: st, date: D, isToday: D === todayStr, starterNext: nextDate(st), options, selected: -1 });
-                });
+                    if (!st) return;
+                    const stMu = projOn(st, date);
+                    const cands = bench.filter(p => fits(p, slot)).map(p => ({ p, score: projOn(p, date) })).filter(o => o.score != null);
+                    const base = { slot, idx, out: st, date, dayLabel: label, isToday: label === 'Today', selected: -1 };
+                    if (stMu == null) {
+                        const options = cands.filter(o => o.score > 0).map(o => ({ ...o, gain: o.score })).sort((x, y) => y.score - x.score);
+                        if (options.length) groups.push({ ...base, kind: 'tonight', starterNext: nextDate(st), options });
+                    } else {
+                        const options = cands.filter(o => o.score - stMu > 0.1).map(o => ({ ...o, gain: o.score - stMu })).sort((x, y) => y.gain - x.gain);
+                        if (options.length) groups.push({ ...base, kind: 'upgrade', outMu: stMu, options });
+                    }
+                }));
             }
 
             // A bench player can only fill one slot: settle default picks, most restrictive slots first
@@ -1989,6 +2005,9 @@
             return groups;
         }
 
+        // Two fixes clash if they use the same player on the same day (problem fixes cover every day)
+        function sameFixDay(a, b) { return !a.date || !b.date || a.date === b.date; }
+
         // Check one option in a slot; unchecks other options there and the same player elsewhere
         function toggleFix(g, o, on) {
             const groups = league.fixes;
@@ -1997,7 +2016,7 @@
             if (on) {
                 grp.selected = o;
                 const pid = grp.options[o].p.pid;
-                groups.forEach((x, j) => { if (j !== g && x.selected >= 0 && x.options[x.selected].p.pid === pid) x.selected = -1; });
+                groups.forEach((x, j) => { if (j !== g && x.selected >= 0 && x.options[x.selected].p.pid === pid && sameFixDay(x, grp)) x.selected = -1; });
             } else if (grp.selected === o) grp.selected = -1;
             renderLineupFixes();
         }
@@ -2012,7 +2031,7 @@
             if (!groups.length) {
                 box.innerHTML = `
                     <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 space-y-2">
-                        <div><i class="fa-solid fa-circle-check mr-1"></i>Every starter has a game ${nba ? 'left this week' : 'this week'}, no empty slot can use a bench player's game today, and no bench player playing the same day projects higher. Nothing to swap.</div>
+                        <div><i class="fa-solid fa-circle-check mr-1"></i>${nba ? 'Nothing to change for today or tomorrow: every open slot is covered and no bench player who plays then projects higher.' : 'Every starter has a game this week, and no bench player playing the same day projects higher. Nothing to swap.'}</div>
                         <div class="flex gap-2">${againBtn}</div>
                     </div>`;
                 return;
@@ -2024,7 +2043,7 @@
                 return `${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left${nx ? ` · next ${day(nx.date)} ${nx.home ? 'vs' : '@'} ${nx.opp}` : ''}`;
             };
             const pickedElsewhere = (gi, pid) => {
-                const j = groups.findIndex((x, k) => k !== gi && x.selected >= 0 && x.options[x.selected].p.pid === pid);
+                const j = groups.findIndex((x, k) => k !== gi && x.selected >= 0 && x.options[x.selected].p.pid === pid && sameFixDay(x, groups[gi]));
                 return j >= 0 ? (SLOT_NAMES[groups[j].slot] || groups[j].slot) : null;
             };
             const chip = slot => `<span class="inline-block px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-extrabold text-emerald-400">${esc(SLOT_NAMES[slot] || slot)}</span>`;
@@ -2038,6 +2057,8 @@
                     ? `plays ${grp.isToday ? 'tonight' : esc(day(grp.date))} ${tonightGame ? `${tonightGame.home ? 'vs' : '@'} ${esc(tonightGame.opp)}` : ''} · proj <strong class="text-emerald-400">${o.score.toFixed(1)}</strong> · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left`
                     : grp.kind === 'upgrade'
                     ? `proj ${o.score.toFixed(1)} on ${esc(day(grp.date))} <strong class="text-emerald-400">+${o.gain.toFixed(1)}</strong>${nba ? ` · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left` : ''}`
+                    : nba && o.dayLabel
+                    ? `plays ${esc(o.dayLabel.toLowerCase())} (${esc(day(o.date))}) · proj <strong class="text-emerald-400">${o.score.toFixed(1)}</strong> · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left`
                     : `${esc(gamesInfo(p))} · ${nba ? 'exp' : 'proj'} <strong class="text-emerald-400">${o.score.toFixed(1)}</strong>`;
                 const warn = grp.kind === 'upgrade' && nba && grp.out.gamesLeft > p.gamesLeft
                     ? `<div class="text-amber-300/90">${esc(grp.out.name)} has ${grp.out.gamesLeft} games left vs ${p.gamesLeft}.</div>` : '';
@@ -2053,7 +2074,7 @@
                     </label>`;
             };
 
-            const keyOf = grp => `${grp.kind}-${grp.idx}`;
+            const keyOf = grp => `${grp.kind}-${grp.idx}-${grp.date || ''}`;
             const summaryLine = grp => {
                 const pick = grp.selected >= 0 ? grp.options[grp.selected] : null;
                 const who = grp.out ? esc(grp.out.name) : 'Empty slot';
@@ -2065,7 +2086,8 @@
                 const best = grp.options[0];
                 const shown = pick || best;
                 const gain = grp.kind === 'tonight' ? `proj ${shown.score.toFixed(1)}` : `+${shown.gain.toFixed(1)}`;
-                return `<span class="text-slate-300">${who}</span> <i class="fa-solid fa-arrow-right text-slate-500 mx-0.5"></i> <span class="${pick ? 'text-emerald-300' : 'text-slate-400'}">${esc(shown.p.name)}</span> <span class="text-emerald-400 font-bold">${gain}</span>`;
+                const tag = grp.kind === 'tonight' ? ' <span class="text-[10px] text-violet-300">no game</span>' : '';
+                return `<span class="text-slate-300">${who}</span>${tag} <i class="fa-solid fa-arrow-right text-slate-500 mx-0.5"></i> <span class="${pick ? 'text-emerald-300' : 'text-slate-400'}">${esc(shown.p.name)}</span> <span class="text-emerald-400 font-bold">${gain}</span>`;
             };
             const groupCard = (grp, gi) => {
                 const key = keyOf(grp);
@@ -2094,12 +2116,28 @@
             const tonight = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'tonight');
             const tonightWord = !tonight.length ? '' : tonight[0][0].isToday ? 'tonight' : `on ${day(tonight[0][0].date)}`;
             const nSel = groups.filter(g => g.selected >= 0).length;
+            // NBA: one section per day (today, tomorrow) with open slots first, then upgrades
+            const daySections = () => {
+                const dates = [...new Set(groups.filter(g => g.kind !== 'problem').map(g => g.date))].sort();
+                return dates.map(dt => {
+                    const items = groups.map((g, i) => [g, i]).filter(([g]) => g.kind !== 'problem' && g.date === dt)
+                        .sort(([a], [b]) => (a.kind === 'tonight' ? 0 : 1) - (b.kind === 'tonight' ? 0 : 1));
+                    const label = items[0][0].dayLabel || '';
+                    const nOpen = items.filter(([g]) => g.kind === 'tonight').length, nUp = items.length - nOpen;
+                    return `
+                        <div class="pt-2 flex items-center justify-between gap-2">
+                            <div class="text-[11px] font-bold text-cyan-300"><i class="fa-solid fa-calendar-day mr-1"></i>${esc(label)} · ${esc(day(dt))}</div>
+                            <div class="text-[10px] text-slate-500">${[nOpen ? `${nOpen} open` : '', nUp ? `${nUp} upgrade${nUp === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</div>
+                        </div>
+                        ${items.map(([g, i]) => groupCard(g, i)).join('')}`;
+                }).join('');
+            };
             const section = (label, color, icon, list) => list.length ? `
                 <div class="pt-1 text-[11px] font-bold ${color}"><i class="fa-solid ${icon} mr-1"></i>${label}</div>
                 ${list.map(([g, i]) => groupCard(g, i)).join('')}` : '';
             const parts = [
                 problems.length ? `${problems.length} problem${problems.length === 1 ? '' : 's'}` : '',
-                tonight.length ? `${tonight.length} open ${tonightWord}` : '',
+                tonight.length ? (nba ? `${tonight.length} open slot${tonight.length === 1 ? '' : 's'}` : `${tonight.length} open ${tonightWord}`) : '',
                 upgrades.length ? `${upgrades.length} upgrade${upgrades.length === 1 ? '' : 's'}` : ''
             ].filter(Boolean).join(' · ');
 
@@ -2114,10 +2152,12 @@
                         <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/panel:rotate-180"></i>
                     </summary>
                     <div class="px-3 pb-3 space-y-1.5">
-                        <div class="text-[11px] text-slate-500">Tap a slot to see every option. Checked swaps are the ones to make.</div>
+                        <div class="text-[11px] text-slate-500">${nba ? 'Only today\'s and tomorrow\'s games, the lineups you can still change. ' : ''}Tap a slot to see every option. Checked swaps are the ones to make.</div>
                         ${section(`Lineup problems`, 'text-amber-300', 'fa-triangle-exclamation', problems)}
+                        ${nba ? daySections() : `
                         ${section(`Play ${esc(tonightWord)} (starter has no game)`, 'text-violet-300', 'fa-moon', tonight)}
-                        ${section(`Upgrades (same day, higher projection)`, 'text-cyan-300', 'fa-arrow-trend-up', upgrades)}
+                        ${section(`Upgrades (same day, higher projection)`, 'text-cyan-300', 'fa-arrow-trend-up', upgrades)}`}
+                        ${nba && !problems.length && !tonight.length && !upgrades.length ? `<div class="text-[11px] text-emerald-300">Nothing to change for today or tomorrow.</div>` : ''}
                     </div>
                 </details>
                 <div class="flex gap-2 mt-2">${openBtn}${againBtn}</div>`;
