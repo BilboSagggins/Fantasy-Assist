@@ -1844,7 +1844,39 @@
                 // default: make the swap, unless he may be your locked score or still out-values the replacement
                 f.checked = !!f.in && !f.keep && (!f.out || !f.out.games || f.out.gamesLeft === 0 || worth(f.in) > worth(f.out));
             });
-            return flagged;
+
+            // Possible upgrades: a bench player who plays the SAME DAY as a starter,
+            // fits that slot, and projects higher for that game
+            const nextProj = p => {
+                if (nba) {
+                    const g = (p.games || []).find(x => !x.done);
+                    return g ? { date: g.date, mu: g.mu } : null;
+                }
+                return p.game && p.status === 'pre_game' ? { date: p.game.date, mu: p.mu || 0 } : null;
+            };
+            const flaggedIdx = new Set(flagged.map(f => f.idx));
+            const pairs = [];
+            positions.forEach((slot, i) => {
+                if (flaggedIdx.has(i) || !(nba ? NBA_SLOTS[slot] : SLOT_ELIGIBLE[slot])) return;
+                const st = byPid[starters[i]];
+                const sd = st && nextProj(st);
+                if (!sd) return;
+                league.players.forEach(b => {
+                    if (starterSet.has(b.pid) || parked.has(b.pid) || used.has(b.pid) || !plays(b) || !fits(b, slot)) return;
+                    const bd = nextProj(b);
+                    if (!bd || bd.date !== sd.date) return;
+                    const gain = bd.mu - sd.mu;
+                    if (gain >= 1) pairs.push({ slot, idx: i, out: st, in: b, gain, date: sd.date, outMu: sd.mu, inMu: bd.mu });
+                });
+            });
+            const upgrades = [];
+            const slotTaken = new Set();
+            pairs.sort((a, b) => b.gain - a.gain).forEach(u => {
+                if (slotTaken.has(u.idx) || used.has(u.in.pid)) return;
+                slotTaken.add(u.idx); used.add(u.in.pid);
+                upgrades.push({ ...u, upgrade: true, checked: false });
+            });
+            return flagged.concat(upgrades);
         }
 
         function toggleFix(i, on) {
@@ -1861,10 +1893,12 @@
             const sleeperUrl = `https://sleeper.com/leagues/${encodeURIComponent(league.leagueId)}/team`;
             const openBtn = `<a href="${sleeperUrl}" target="_blank" rel="noopener" class="flex-1 text-center py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Sleeper</a>`;
             const againBtn = `<button onclick="fixLineup()" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition"><i class="fa-solid fa-rotate mr-1 text-emerald-400"></i>Check again</button>`;
+            const problems = fixes.map((f, i) => ({ f, i })).filter(x => !x.f.upgrade);
+            const upgrades = fixes.map((f, i) => ({ f, i })).filter(x => x.f.upgrade);
             if (!fixes.length) {
                 box.innerHTML = `
                     <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 space-y-2">
-                        <div><i class="fa-solid fa-circle-check mr-1"></i>Every starter has a game ${nba ? 'left this week' : 'this week'}. Nothing to swap.</div>
+                        <div><i class="fa-solid fa-circle-check mr-1"></i>Every starter has a game ${nba ? 'left this week' : 'this week'}, and no bench player playing the same day projects higher. Nothing to swap.</div>
                         <div class="flex gap-2">${againBtn}</div>
                     </div>`;
                 return;
@@ -1876,24 +1910,39 @@
                 }
                 return kickLabel(p);
             };
+            const chip = slot => `<span class="inline-block px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-extrabold text-emerald-400">${esc(SLOT_NAMES[slot] || slot)}</span>`;
+            const box_ = (i, f, body, disabled) => `
+                <label class="flex items-start gap-2.5 p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 ${disabled ? 'opacity-80' : 'cursor-pointer'}">
+                    <input type="checkbox" ${f.checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="toggleFix(${i}, this.checked)" class="mt-0.5 w-5 h-5 shrink-0 accent-emerald-500">
+                    <div class="flex-1 min-w-0 text-[11px] space-y-1">${body}</div>
+                </label>`;
+            const problemRow = ({ f, i }) => box_(i, f, `
+                ${chip(f.slot)}
+                <div class="text-rose-300"><strong>${f.out ? 'Bench' : 'Fill'}:</strong> ${f.out ? `${esc(f.out.name)} <span class="text-rose-300/70">(${esc(f.reason)})</span>` : 'empty slot'}</div>
+                ${f.in
+                    ? `<div class="text-emerald-300"><strong>Start:</strong> ${esc(f.in.name)} <span class="text-slate-400">${esc(f.in.team)} ${esc((f.in.fpos || [f.in.pos]).join('/'))} · ${esc(nextGame(f.in))} · ${nba ? 'exp' : 'proj'} ${(nba ? f.in.value : f.in.mu).toFixed(1)}</span></div>`
+                    : `<div class="text-slate-400">No eligible bench player with a game. Check the waiver wire.</div>`}`, !f.in);
+            const upgradeRow = ({ f, i }) => {
+                const day = fmtDate(`${f.date}T12:00:00`);
+                const extra = nba && f.out.gamesLeft > f.in.gamesLeft
+                    ? `<div class="text-amber-300/90">Heads up: ${esc(f.out.name)} has ${f.out.gamesLeft} games left vs ${f.in.gamesLeft} for ${esc(f.in.name)}.</div>` : '';
+                return box_(i, f, `
+                    <div class="flex items-center justify-between gap-2">${chip(f.slot)}<span class="font-extrabold text-emerald-400">+${f.gain.toFixed(1)} pts</span></div>
+                    <div class="text-slate-300"><strong>Bench:</strong> ${esc(f.out.name)} <span class="text-slate-400">proj ${f.outMu.toFixed(1)} on ${esc(day)}</span></div>
+                    <div class="text-emerald-300"><strong>Start:</strong> ${esc(f.in.name)} <span class="text-slate-400">${esc(f.in.team)} ${esc((f.in.fpos || [f.in.pos]).join('/'))} · proj ${f.inMu.toFixed(1)} on ${esc(day)}, same day</span></div>
+                    ${extra}`, false);
+            };
             box.innerHTML = `
-                <div class="p-3 rounded-xl bg-slate-900/80 border border-amber-800/60 space-y-2">
+                <div class="p-3 rounded-xl bg-slate-900/80 border ${problems.length ? 'border-amber-800/60' : 'border-slate-700'} space-y-2">
                     <div class="flex items-center justify-between gap-2">
-                        <div class="font-bold text-sm text-amber-200"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${fixes.length} lineup ${fixes.length === 1 ? 'problem' : 'problems'}</div>
+                        <div class="font-bold text-sm ${problems.length ? 'text-amber-200' : 'text-emerald-200'}"><i class="fa-solid ${problems.length ? 'fa-triangle-exclamation' : 'fa-circle-check'} mr-1"></i>${problems.length ? `${problems.length} lineup ${problems.length === 1 ? 'problem' : 'problems'}` : 'No lineup problems'}</div>
                         <div id="fix-count" class="text-[11px] text-slate-400"></div>
                     </div>
-                    <div class="text-[11px] text-slate-400">Uncheck any swap you want to skip, for example to keep a player you're locking.</div>
-                    ${fixes.map((f, i) => `
-                        <label class="flex items-start gap-2.5 p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 ${f.in ? 'cursor-pointer' : 'opacity-80'}">
-                            <input type="checkbox" ${f.checked ? 'checked' : ''} ${f.in ? '' : 'disabled'} onchange="toggleFix(${i}, this.checked)" class="mt-0.5 w-5 h-5 shrink-0 accent-emerald-500">
-                            <div class="flex-1 min-w-0 text-[11px] space-y-1">
-                                <span class="inline-block px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-extrabold text-emerald-400">${esc(SLOT_NAMES[f.slot] || f.slot)}</span>
-                                <div class="text-rose-300"><strong>${f.out ? 'Bench' : 'Fill'}:</strong> ${f.out ? `${esc(f.out.name)} <span class="text-rose-300/70">(${esc(f.reason)})</span>` : 'empty slot'}</div>
-                                ${f.in
-                                    ? `<div class="text-emerald-300"><strong>Start:</strong> ${esc(f.in.name)} <span class="text-slate-400">${esc(f.in.team)} ${esc((f.in.fpos || [f.in.pos]).join('/'))} · ${esc(nextGame(f.in))} · ${nba ? 'exp' : 'proj'} ${(nba ? f.in.value : f.in.mu).toFixed(1)}</span></div>`
-                                    : `<div class="text-slate-400">No eligible bench player with a game. Check the waiver wire.</div>`}
-                            </div>
-                        </label>`).join('')}
+                    ${problems.length ? `<div class="text-[11px] text-slate-400">Uncheck any swap you want to skip, for example to keep a player you're locking.</div>${problems.map(problemRow).join('')}` : ''}
+                    ${upgrades.length ? `
+                        <div class="pt-1 text-xs font-bold text-cyan-300"><i class="fa-solid fa-arrow-trend-up mr-1"></i>Possible upgrades (${upgrades.length}) · same day, higher projection</div>
+                        <div class="text-[11px] text-slate-400">Check any you want to make.</div>
+                        ${upgrades.map(upgradeRow).join('')}` : ''}
                     <div class="text-[11px] text-slate-400">Make the checked swaps in Sleeper, then tap <strong>Check again</strong> to confirm.</div>
                     <div class="flex gap-2">${openBtn}${againBtn}</div>
                 </div>`;
