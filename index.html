@@ -1680,7 +1680,12 @@
             const weekGames = sched.filter(g => Number(g.week) === week).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
             const qs = ['PG', 'SG', 'SF', 'PF', 'C'].map(p => `position[]=${p}`).join('&');
-            const projArr = await getJSON(`${SLEEPER_API}/projections/nba/${season}/${week}?season_type=regular&${qs}`).catch(() => []);
+            const [projArr, liveArr] = await Promise.all([
+                getJSON(`${SLEEPER_API}/projections/nba/${season}/${week}?season_type=regular&${qs}`).catch(() => []),
+                getJSON(`${SLEEPER}/league/${league.leagueId}/matchups/${week}`).catch(() => null)
+            ]);
+            const myLive = (liveArr || []).find(m => m.roster_id === league.roster.roster_id);
+            const countedPts = myLive?.players_points || {};
             const proj = {};
             (Array.isArray(projArr) ? projArr : []).forEach(x => {
                 if (x && x.player_id) (proj[String(x.player_id)] = proj[String(x.player_id)] || []).push(x);
@@ -1759,6 +1764,23 @@
                     else if (!remaining.length && !completed.length) p.unavailable = 'Week over (was on bench)';
                     else if (p.value <= 0) p.unavailable = p.injury || 'No projection';
                 }
+            });
+
+            // Lock-In detection. Sleeper has no lock flag, but a player's counted score follows his
+            // latest game until he's locked. If it still matches an earlier game after he has played
+            // again, he's locked. If it matches his only/latest game, it can't be told yet.
+            league.week = week;
+            loadLockOverrides();
+            league.players.forEach(p => {
+                p.lockInfo = null;
+                const c = countedPts[p.pid];
+                const played = (p.games || []).filter(g => g.done && !g.dnp);
+                if (c == null || !played.length) return;
+                const close = g => Math.abs(g.actual - Number(c)) < 0.15;
+                const last = played[played.length - 1];
+                const k = played.findIndex(close);
+                if (k >= 0 && k < played.length - 1 && !close(last)) p.lockInfo = { status: 'locked', game: played[k] };
+                else if (k === played.length - 1 && Number(c) !== 0) p.lockInfo = { status: 'maybe', game: last };
             });
 
             // Lineup: most restrictive slots first, best expected locked score
@@ -1890,6 +1912,25 @@
             }
         }
 
+        function lockKey() { return `rosteriq_locks_${league.leagueId}_${league.week}`; }
+        function loadLockOverrides() {
+            try { league.lockOverrides = JSON.parse(lsGet(lockKey()) || '{}') || {}; } catch (e) { league.lockOverrides = {}; }
+        }
+        function isLocked(p) {
+            if (!p || league.sport !== 'nba') return false;
+            const o = league.lockOverrides?.[p.pid];
+            return o != null ? o : p.lockInfo?.status === 'locked';
+        }
+        function toggleLock(pid) {
+            const p = league.players.find(x => x.pid === pid);
+            if (!p) return;
+            league.lockOverrides = league.lockOverrides || {};
+            league.lockOverrides[pid] = !isLocked(p);
+            lsSet(lockKey(), JSON.stringify(league.lockOverrides));
+            league.fixes = computeLineupFixes();
+            renderLineupFixes();
+        }
+
         function computeLineupFixes() {
             const nba = league.sport === 'nba';
             const positions = (league.info.roster_positions || []).filter(s => !['BN', 'IR', 'TAXI'].includes(s));
@@ -1943,6 +1984,7 @@
             positions.forEach((slot, idx) => {
                 if (!slotOk(slot)) return;
                 const pid = starters[idx];
+                if (isLocked(byPid[pid])) return; // locked for the week: leave this slot alone
                 const reason = problemOf(pid);
                 const out = byPid[pid] || null;
                 if (reason) {
@@ -1980,7 +2022,7 @@
                 windowDays.forEach(({ date, label }) => positions.forEach((slot, idx) => {
                     if (!slotOk(slot) || problemIdx.has(idx)) return;
                     const st = byPid[starters[idx]];
-                    if (!st) return;
+                    if (!st || isLocked(st)) return;
                     const stMu = projOn(st, date);
                     const cands = bench.filter(p => fits(p, slot)).map(p => ({ p, score: projOn(p, date) })).filter(o => o.score != null);
                     const base = { slot, idx, out: st, date, dayLabel: label, isToday: label === 'Today', selected: -1 };
@@ -2028,7 +2070,7 @@
             const sleeperUrl = `https://sleeper.com/leagues/${encodeURIComponent(league.leagueId)}/team`;
             const openBtn = `<a href="${sleeperUrl}" target="_blank" rel="noopener" class="flex-1 text-center py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Sleeper</a>`;
             const againBtn = `<button onclick="fixLineup()" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition"><i class="fa-solid fa-rotate mr-1 text-emerald-400"></i>Check again</button>`;
-            if (!groups.length) {
+            if (!groups.length && !nba) {
                 box.innerHTML = `
                     <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 space-y-2">
                         <div><i class="fa-solid fa-circle-check mr-1"></i>${nba ? 'Nothing to change for today or tomorrow: every open slot is covered and no bench player who plays then projects higher.' : 'Every starter has a game this week, and no bench player playing the same day projects higher. Nothing to swap.'}</div>
@@ -2116,6 +2158,23 @@
             const tonight = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'tonight');
             const tonightWord = !tonight.length ? '' : tonight[0][0].isToday ? 'tonight' : `on ${day(tonight[0][0].date)}`;
             const nSel = groups.filter(g => g.selected >= 0).length;
+            // Starters who've played this week can be locked; show them as tappable chips
+            const starterIds = new Set((league.roster.starters || []).map(String));
+            const lockable = nba ? league.players.filter(p => starterIds.has(p.pid) && (p.games || []).some(g => g.done && !g.dnp)) : [];
+            const nLocked = lockable.filter(isLocked).length;
+            const lockChip = p => {
+                const on = isLocked(p);
+                const auto = p.lockInfo?.status === 'locked' && league.lockOverrides?.[p.pid] == null;
+                const maybe = !on && p.lockInfo?.status === 'maybe';
+                return `<button onclick="event.preventDefault(); toggleLock('${esc(p.pid)}')" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold ${on ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-200' : 'bg-slate-950/60 border-slate-700 text-slate-300'}">
+                    <i class="fa-solid ${on ? 'fa-lock' : 'fa-lock-open'} text-[10px]"></i>${esc(p.name)}${auto ? ' <span class="text-[9px] text-emerald-300/70">auto</span>' : ''}${maybe ? ' <span class="text-[9px] text-amber-300">?</span>' : ''}</button>`;
+            };
+            const locksBlock = lockable.length ? `
+                <div class="p-2 rounded-lg bg-slate-950/50 border border-slate-800 space-y-1.5">
+                    <div class="text-[11px] font-bold text-slate-300"><i class="fa-solid fa-lock mr-1 text-emerald-400"></i>Locked this week · <span class="font-normal text-slate-500">tap to mark; locked players are left out of fixes</span></div>
+                    <div class="flex flex-wrap gap-1.5">${lockable.map(lockChip).join('')}</div>
+                    ${lockable.some(p => p.lockInfo?.status === 'maybe' && !isLocked(p)) ? `<div class="text-[10px] text-amber-300/80">? = may be locked (can't tell until his next game). Tap if you locked him.</div>` : ''}
+                </div>` : '';
             // NBA: one section per day (today, tomorrow) with open slots first, then upgrades
             const daySections = () => {
                 const dates = [...new Set(groups.filter(g => g.kind !== 'problem').map(g => g.date))].sort();
@@ -2136,6 +2195,7 @@
                 <div class="pt-1 text-[11px] font-bold ${color}"><i class="fa-solid ${icon} mr-1"></i>${label}</div>
                 ${list.map(([g, i]) => groupCard(g, i)).join('')}` : '';
             const parts = [
+                nLocked ? `${nLocked} locked` : '',
                 problems.length ? `${problems.length} problem${problems.length === 1 ? '' : 's'}` : '',
                 tonight.length ? (nba ? `${tonight.length} open slot${tonight.length === 1 ? '' : 's'}` : `${tonight.length} open ${tonightWord}`) : '',
                 upgrades.length ? `${upgrades.length} upgrade${upgrades.length === 1 ? '' : 's'}` : ''
@@ -2152,6 +2212,7 @@
                         <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/panel:rotate-180"></i>
                     </summary>
                     <div class="px-3 pb-3 space-y-1.5">
+                        ${locksBlock}
                         <div class="text-[11px] text-slate-500">${nba ? 'Only today\'s and tomorrow\'s games, the lineups you can still change. ' : ''}Tap a slot to see every option. Checked swaps are the ones to make.</div>
                         ${section(`Lineup problems`, 'text-amber-300', 'fa-triangle-exclamation', problems)}
                         ${nba ? daySections() : `
