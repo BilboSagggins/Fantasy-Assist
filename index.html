@@ -1915,17 +1915,20 @@
             el.innerHTML = `
                 <div class="text-emerald-300 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>Notifications are on for this phone.</div>
                 ${msg}
-                <div class="font-bold text-slate-200">One-time setup on GitHub</div>
+                <div class="font-bold text-slate-200">Your repo (one-time)</div>
                 <ol class="list-decimal pl-4 space-y-1">
-                    <li>Tap <strong>Copy code</strong>.</li>
-                    <li>Tap <strong>Open GitHub</strong>, name the secret <code class="px-1 rounded bg-slate-800 text-emerald-300">PUSH_CONFIG</code>, paste the code as the value, and tap <strong>Add secret</strong>.</li>
-                    <li>Done. Reminders arrive at 10 AM Central. To test now: GitHub &rarr; Actions &rarr; Lock reminder &rarr; Run workflow.</li>
+                    <li>Tap <strong>Copy code</strong>, then <strong>Open GitHub</strong>.</li>
+                    <li>Name the secret <code class="px-1 rounded bg-slate-800 text-emerald-300">PUSH_CONFIG</code>, paste the code, and tap <strong>Add secret</strong>.</li>
+                    <li>Reminders arrive at 10 AM Central. To test: GitHub &rarr; Actions &rarr; Lock reminder &rarr; Run workflow.</li>
                 </ol>
                 <div class="flex gap-2">
                     <button onclick="copyReminderCode()" class="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"><i class="fa-solid fa-copy mr-1"></i>Copy code</button>
                     <a href="${SECRET_URL}" target="_blank" rel="noopener" class="flex-1 text-center py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200"><i class="fa-brands fa-github mr-1"></i>Open GitHub</a>
                 </div>
-                <div class="text-slate-500">Keep this code private: it lets GitHub send notifications to this phone. If you turn reminders off and on again, the code changes and you'll need to update the secret.</div>
+                <div class="font-bold text-slate-200 pt-1">Adding a friend</div>
+                <div>They turn on reminders in their app and tap <strong>Send code</strong> to text it to you. You add it as a new secret: <code class="px-1 rounded bg-slate-800 text-emerald-300">PUSH_CONFIG_2</code> for the first friend, <code class="px-1 rounded bg-slate-800 text-emerald-300">PUSH_CONFIG_3</code> for the next, and so on (up to 15).</div>
+                <button onclick="shareReminderCode()" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200"><i class="fa-solid fa-share-nodes mr-1"></i>Send code (if someone else runs your reminders)</button>
+                <div class="text-slate-500">This code only lets that repo send notifications to this phone. Share it only with the person who runs the reminders. If you turn reminders off and on again, the code changes and the secret needs updating.</div>
                 <div class="flex gap-2">
                     <button onclick="testReminder()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200">Test on this phone</button>
                     <button onclick="disableReminders()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-rose-300">Turn off</button>
@@ -1949,7 +1952,8 @@
                 let sub = await reg.pushManager.getSubscription();
                 if (sub && sub.options && sub.options.applicationServerKey && b64u(sub.options.applicationServerKey) !== keys.publicKey) { await sub.unsubscribe(); sub = null; }
                 if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64u(keys.publicKey) });
-                const config = { subject: location.origin + location.pathname.replace(/index\.html$/, ''), publicKey: keys.publicKey, privateKey: keys.privateKey, subscriptions: [sub.toJSON()] };
+                const name = (lsGet('rosteriq_user') || '').trim() || 'phone';
+                const config = { name, subject: location.origin + location.pathname.replace(/index\.html$/, ''), publicKey: keys.publicKey, privateKey: keys.privateKey, subscriptions: [sub.toJSON()] };
                 lsSet('rosteriq_push_config', JSON.stringify(config));
                 renderReminder();
             } catch (e) {
@@ -1965,6 +1969,15 @@
                 try { document.execCommand('copy'); renderReminder('Code copied. Now tap Open GitHub.'); } catch (e2) { renderReminder('Copy failed. Long-press to copy instead.'); }
                 t.remove();
             }
+        }
+
+        async function shareReminderCode() {
+            const code = lsGet('rosteriq_push_config') || '';
+            if (navigator.share) {
+                try { await navigator.share({ title: 'RosterIQ reminder code', text: code }); return; }
+                catch (e) { if (e && e.name === 'AbortError') return; }
+            }
+            copyReminderCode();
         }
 
         async function testReminder() {

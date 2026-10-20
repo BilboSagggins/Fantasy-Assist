@@ -20,5 +20,20 @@ jobs:
       - run: npm install --no-save web-push@3.6.7
       - run: node .github/scripts/send-reminder.mjs
         env:
+          # Your phone, then one secret per extra person (PUSH_CONFIG_2 ... PUSH_CONFIG_15)
           PUSH_CONFIG: ${{ secrets.PUSH_CONFIG }}
+          PUSH_CONFIG_2: ${{ secrets.PUSH_CONFIG_2 }}
+          PUSH_CONFIG_3: ${{ secrets.PUSH_CONFIG_3 }}
+          PUSH_CONFIG_4: ${{ secrets.PUSH_CONFIG_4 }}
+          PUSH_CONFIG_5: ${{ secrets.PUSH_CONFIG_5 }}
+          PUSH_CONFIG_6: ${{ secrets.PUSH_CONFIG_6 }}
+          PUSH_CONFIG_7: ${{ secrets.PUSH_CONFIG_7 }}
+          PUSH_CONFIG_8: ${{ secrets.PUSH_CONFIG_8 }}
+          PUSH_CONFIG_9: ${{ secrets.PUSH_CONFIG_9 }}
+          PUSH_CONFIG_10: ${{ secrets.PUSH_CONFIG_10 }}
+          PUSH_CONFIG_11: ${{ secrets.PUSH_CONFIG_11 }}
+          PUSH_CONFIG_12: ${{ secrets.PUSH_CONFIG_12 }}
+          PUSH_CONFIG_13: ${{ secrets.PUSH_CONFIG_13 }}
+          PUSH_CONFIG_14: ${{ secrets.PUSH_CONFIG_14 }}
+          PUSH_CONFIG_15: ${{ secrets.PUSH_CONFIG_15 }}
           SCHEDULE: ${{ github.event.schedule }}
