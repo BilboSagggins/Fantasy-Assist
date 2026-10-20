@@ -1814,11 +1814,12 @@
             const bench = league.players.filter(p => !starterSet.has(p.pid) && !parked.has(p.pid) && plays(p));
 
             // Projection for one specific day: NBA uses that date's game, NFL his game this week
+            const isOpen = g => !g.done && !/progress|in_game|live|half/i.test(g.status || '');
             const projOn = (p, date) => {
-                if (nba) { const g = (p.games || []).find(x => !x.done && x.date === date); return g ? g.mu : null; }
+                if (nba) { const g = (p.games || []).find(x => isOpen(x) && x.date === date); return g ? g.mu : null; }
                 return p.game && p.status === 'pre_game' && p.game.date === date ? (p.mu || 0) : null;
             };
-            const nextDate = p => nba ? (p.games || []).find(x => !x.done)?.date : (p.game && p.status === 'pre_game' ? p.game.date : null);
+            const nextDate = p => nba ? (p.games || []).find(isOpen)?.date : (p.game && p.status === 'pre_game' ? p.game.date : null);
 
             const problemOf = pid => {
                 if (!pid || pid === '0') return 'empty slot';
@@ -1864,6 +1865,27 @@
                 if (options.length) groups.push({ kind: 'upgrade', slot, idx, out, date, outMu, options, selected: -1 });
             });
 
+            // Play tonight (NBA): a starter with no game today leaves his slot empty today.
+            // Any bench player who plays today and fits can use it; move the starter back for his next game.
+            if (nba) {
+                const d = new Date();
+                const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                const openDates = [...new Set(league.players.flatMap(p => (p.games || []).filter(isOpen).map(g => g.date)))].sort();
+                const D = openDates.includes(todayStr) ? todayStr : openDates[0];
+                const problemIdx = new Set(groups.filter(g => g.kind === 'problem').map(g => g.idx));
+                if (D) positions.forEach((slot, idx) => {
+                    if (!slotOk(slot) || problemIdx.has(idx)) return;
+                    const st = byPid[starters[idx]];
+                    if (!st || projOn(st, D) != null) return; // he plays that day: covered by upgrades
+                    const options = bench.filter(p => fits(p, slot))
+                        .map(p => ({ p, score: projOn(p, D) }))
+                        .filter(o => o.score != null && o.score > 0)
+                        .map(o => ({ ...o, gain: o.score }))
+                        .sort((a, b) => b.score - a.score);
+                    if (options.length) groups.push({ kind: 'tonight', slot, idx, out: st, date: D, isToday: D === todayStr, starterNext: nextDate(st), options, selected: -1 });
+                });
+            }
+
             // A bench player can only fill one slot: settle default picks, most restrictive slots first
             const elig = slot => (nba ? NBA_SLOTS[slot] : SLOT_ELIGIBLE[slot]).length;
             const taken = new Set();
@@ -1898,7 +1920,7 @@
             if (!groups.length) {
                 box.innerHTML = `
                     <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 space-y-2">
-                        <div><i class="fa-solid fa-circle-check mr-1"></i>Every starter has a game ${nba ? 'left this week' : 'this week'}, and no bench player playing the same day projects higher. Nothing to swap.</div>
+                        <div><i class="fa-solid fa-circle-check mr-1"></i>Every starter has a game ${nba ? 'left this week' : 'this week'}, no empty slot can use a bench player's game today, and no bench player playing the same day projects higher. Nothing to swap.</div>
                         <div class="flex gap-2">${againBtn}</div>
                     </div>`;
                 return;
@@ -1919,7 +1941,10 @@
                 const p = o.p;
                 const on = grp.selected === oi;
                 const elsewhere = pickedElsewhere(gi, p.pid);
-                const detail = grp.kind === 'upgrade'
+                const tonightGame = grp.kind === 'tonight' ? (p.games || []).find(g => g.date === grp.date) : null;
+                const detail = grp.kind === 'tonight'
+                    ? `plays ${grp.isToday ? 'tonight' : esc(day(grp.date))} ${tonightGame ? `${tonightGame.home ? 'vs' : '@'} ${esc(tonightGame.opp)}` : ''} · proj <strong class="text-emerald-400">${o.score.toFixed(1)}</strong> · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left`
+                    : grp.kind === 'upgrade'
                     ? `proj ${o.score.toFixed(1)} on ${esc(day(grp.date))} <strong class="text-emerald-400">+${o.gain.toFixed(1)}</strong>${nba ? ` · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left` : ''}`
                     : `${esc(gamesInfo(p))} · ${nba ? 'exp' : 'proj'} <strong class="text-emerald-400">${o.score.toFixed(1)}</strong>`;
                 const warn = grp.kind === 'upgrade' && nba && grp.out.gamesLeft > p.gamesLeft
@@ -1942,16 +1967,20 @@
                         ${chip(grp.slot)}
                         ${grp.kind === 'problem'
                             ? `<span class="min-w-0 text-rose-300"><strong>${grp.out ? 'Bench' : 'Fill'}:</strong> ${grp.out ? `${esc(grp.out.name)} <span class="text-rose-300/70">(${esc(grp.reason)})</span>` : 'empty slot'}</span>`
+                            : grp.kind === 'tonight'
+                            ? `<span class="min-w-0 text-slate-300"><strong>Starter:</strong> ${esc(grp.out.name)} <span class="text-slate-400">no game ${grp.isToday ? 'tonight' : esc(day(grp.date))}${grp.starterNext ? `, next ${esc(day(grp.starterNext))}` : ''}</span></span>`
                             : `<span class="min-w-0 text-slate-300"><strong>Starter:</strong> ${esc(grp.out.name)} <span class="text-slate-400">proj ${grp.outMu.toFixed(1)} on ${esc(day(grp.date))}</span></span>`}
                     </div>
                     ${grp.options.length
-                        ? `<div class="text-[10px] uppercase tracking-wide font-bold text-slate-500">${grp.kind === 'problem' ? `Start instead (${grp.options.length} option${grp.options.length === 1 ? '' : 's'})` : `Better that day (${grp.options.length})`}</div>
+                        ? `<div class="text-[10px] uppercase tracking-wide font-bold text-slate-500">${grp.kind === 'problem' ? `Start instead (${grp.options.length} option${grp.options.length === 1 ? '' : 's'})` : grp.kind === 'tonight' ? `Plays ${grp.isToday ? 'tonight' : esc(day(grp.date))} (${grp.options.length})` : `Better that day (${grp.options.length})`}</div>
                            ${grp.options.map((o, oi) => optionRow(gi, grp, o, oi)).join('')}`
                         : `<div class="text-[11px] text-slate-400">No eligible bench player with a game. Check the waiver wire.</div>`}
                 </div>`;
 
             const problems = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'problem');
             const upgrades = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'upgrade');
+            const tonight = groups.map((g, i) => [g, i]).filter(([g]) => g.kind === 'tonight');
+            const tonightWord = !tonight.length ? '' : tonight[0][0].isToday ? 'tonight' : `on ${day(tonight[0][0].date)}`;
             const nSel = groups.filter(g => g.selected >= 0).length;
             box.innerHTML = `
                 <div class="p-3 rounded-xl bg-slate-900/80 border ${problems.length ? 'border-amber-800/60' : 'border-slate-700'} space-y-2">
@@ -1960,6 +1989,10 @@
                         <div class="text-[11px] text-slate-400">${nSel ? `${nSel} swap${nSel === 1 ? '' : 's'} to make` : 'No swaps selected'}</div>
                     </div>
                     ${problems.length ? `<div class="text-[11px] text-slate-400">The best option is checked. Pick a different one, or uncheck to keep your starter (for example, one you're locking).</div>${problems.map(([g, i]) => groupCard(g, i)).join('')}` : ''}
+                    ${tonight.length ? `
+                        <div class="pt-1 text-xs font-bold text-violet-300"><i class="fa-solid fa-moon mr-1"></i>Play ${esc(tonightWord)} · ${tonight.length} open slot${tonight.length === 1 ? '' : 's'}</div>
+                        <div class="text-[11px] text-slate-400">These starters don't play ${esc(tonightWord)}, so their slot sits empty. Start a bench player who does, then move your starter back before his next game.</div>
+                        ${tonight.map(([g, i]) => groupCard(g, i)).join('')}` : ''}
                     ${upgrades.length ? `
                         <div class="pt-1 text-xs font-bold text-cyan-300"><i class="fa-solid fa-arrow-trend-up mr-1"></i>Possible upgrades · ${upgrades.length} slot${upgrades.length === 1 ? '' : 's'}</div>
                         <div class="text-[11px] text-slate-400">Every bench player who plays the same day as your starter, fits the slot, and projects higher. Check any you want.</div>
