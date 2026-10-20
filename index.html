@@ -206,6 +206,17 @@
                     <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Fix my lineup
                 </button>
                 <div id="lineup-fix"></div>
+                <details id="myteam-wrap" class="group/team rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadMyTeam()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-users text-cyan-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-cyan-200">My lineup scores</div>
+                            <div id="myteam-sub" class="text-[11px] text-slate-400">Tap to see every starter's score</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/team:rotate-180"></i>
+                    </summary>
+                    <div id="myteam-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
             </div>
             <details id="league-plan-wrap" class="hidden group">
                 <summary class="cursor-pointer list-none text-[11px] font-semibold text-slate-500 hover:text-slate-300 select-none">
@@ -1985,6 +1996,140 @@
             renderReminder('Reminders are off.');
         }
 
+
+        // ---------- My lineup scores ----------
+        const ymdLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const fmtPts = v => (Math.round(v * 100) / 100).toFixed(Math.abs(v * 10 - Math.round(v * 10)) > 1e-9 ? 2 : 1);
+
+        function setTeamDay(n) { league.teamDay = n; loadMyTeam(); }
+
+        async function loadMyTeam() {
+            const body = document.getElementById('myteam-body');
+            if (!league.leagueId || !league.roster) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            const tok = league.loadSeq;
+            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Getting the latest scores from Sleeper...</div>`;
+            try {
+                const nba = league.sport === 'nba';
+                const uid = league.user.user_id;
+                const [rosters, live] = await Promise.all([
+                    getJSON(`${SLEEPER}/league/${league.leagueId}/rosters`),
+                    getJSON(`${SLEEPER}/league/${league.leagueId}/matchups/${league.week}`).catch(() => null)
+                ]);
+                if (tok !== league.loadSeq) return;
+                const mine = (rosters || []).find(r => r.owner_id === uid) || (rosters || []).find(r => (r.co_owners || []).includes(uid));
+                if (mine) league.roster = mine;
+                const myLive = (live || []).find(m => m.roster_id === league.roster.roster_id) || {};
+                const counted = myLive.players_points || {};
+                const positions = (league.info.roster_positions || []).filter(x => !['BN', 'IR', 'TAXI'].includes(x));
+                const starters = (league.roster.starters || []).map(String);
+                const byPid = {};
+                (playerCache[league.sport] || []).forEach(p => { if (p.sleeperId) byPid[String(p.sleeperId)] = p; });
+                league.players.forEach(p => { byPid[p.pid] = { ...byPid[p.pid], ...p }; });
+
+                let rows;
+                if (nba) rows = await nbaDayRows(positions, starters, byPid, counted);
+                else rows = positions.map((slot, i) => {
+                    const p = byPid[starters[i]];
+                    const pts = counted[starters[i]];
+                    return { slot, p, pid: starters[i], pts: pts != null ? Number(pts) : null, status: p ? kickLabel(league.players.find(x => x.pid === starters[i]) || p) : 'Empty', sleeper: null };
+                });
+                if (tok !== league.loadSeq) return;
+                renderMyTeam(rows, myLive);
+            } catch (e) {
+                body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load scores: ${esc(e.message)}</div>`;
+            }
+        }
+
+        async function nbaDayRows(positions, starters, byPid, counted) {
+            const now = new Date();
+            const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - league.teamDay);
+            const D = ymdLocal(day);
+            delete nbaSchedCache[league.season];
+            const sched = await getNbaSchedule(league.season);
+            const games = sched.filter(g => g.date === D);
+            const season = league.season;
+            return Promise.all(positions.map(async (slot, i) => {
+                const pid = starters[i];
+                const p = byPid[pid];
+                if (!pid || pid === '0' || !p) return { slot, pid, p: null, status: 'Empty slot' };
+                const g = games.find(x => nbaPlays(p.team, x));
+                if (!g) return { slot, pid, p, status: 'No game', noGame: true };
+                const home = sameTeam(p.team, nbaTeam(g.home));
+                const opp = home ? nbaTeam(g.away) : nbaTeam(g.home);
+                const final = g.status === 'complete';
+                const base = { slot, pid, p, opp, home, final, gameStatus: g.status };
+                let line = null;
+                try {
+                    const d = await getJSON(`${SLEEPER_API}/stats/nba/player/${pid}?season_type=regular&season=${season}&grouping=week`);
+                    line = Object.values(d || {}).flatMap(v => Array.isArray(v) ? v : (v ? [v] : [])).find(x => x && x.date === D && x.stats);
+                } catch (e) { /* stats not up yet */ }
+                if (!line || num(line.stats.gp) <= 0 && !final) {
+                    return { ...base, status: final ? 'Final · did not play' : (/progress|live|half|in_game/i.test(g.status || '') ? 'Live · no stats yet' : 'Not started'), pts: final ? 0 : null };
+                }
+                const st = sleeperNbaStats(line.stats);
+                const pts = nbaLeagueScoring ? leaguePoints(line.stats, nbaLeagueScoring) : calculateNBAPoints(st);
+                // Check against Sleeper: its counted score is his latest game unless he's locked
+                let check = null;
+                const sp = counted[pid];
+                if (final && sp != null) {
+                    const pl = league.players.find(x => x.pid === pid);
+                    const later = pl && (pl.games || []).some(x => x.done && x.date > D);
+                    if (Math.abs(Number(sp) - pts) < 0.01) check = { ok: true, sleeper: Number(sp) };
+                    else if (isLocked(pl) || later) check = { ok: null, sleeper: Number(sp), note: isLocked(pl) ? 'locked score' : 'counted from another game' };
+                    else check = { ok: false, sleeper: Number(sp) };
+                }
+                return { ...base, status: final ? 'Final' : 'Live', pts, st, check };
+            }));
+        }
+
+        function renderMyTeam(rows, myLive) {
+            const body = document.getElementById('myteam-body');
+            const nba = league.sport === 'nba';
+            const scored = rows.filter(r => r.pts != null);
+            const total = scored.reduce((a, r) => a + r.pts, 0);
+            const now = new Date();
+            const dayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - league.teamDay);
+            const dayName = league.teamDay === 0 ? 'Today' : 'Yesterday';
+            const checks = rows.filter(r => r.check);
+            const ok = checks.filter(r => r.check.ok === true).length, bad = checks.filter(r => r.check.ok === false).length;
+            document.getElementById('myteam-sub').textContent = nba
+                ? `${dayName}: ${fmtPts(total)} pts from ${scored.length} starter${scored.length === 1 ? '' : 's'}`
+                : `This week: ${fmtPts(total)} pts`;
+            const tab = (n, label) => `<button onclick="setTeamDay(${n})" class="flex-1 py-1.5 rounded-lg text-[11px] font-bold ${league.teamDay === n ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/40' : 'bg-slate-950/60 text-slate-400 border border-slate-800'}">${label}</button>`;
+            const statLine = st => st ? `${st.pts} pts · ${st.reb} reb · ${st.ast} ast${st.stl ? ` · ${st.stl} stl` : ''}${st.blk ? ` · ${st.blk} blk` : ''}${st.tpm ? ` · ${st.tpm} 3pm` : ''}${st.tov ? ` · ${st.tov} to` : ''}${st.min ? ` · ${st.min} min` : ''}` : '';
+            const row = r => {
+                const name = r.p ? esc(r.p.name) : '<span class="text-slate-500">Empty</span>';
+                const where = r.opp ? ` ${r.home ? 'vs' : '@'} ${esc(r.opp)}` : '';
+                const chk = !r.check ? '' : r.check.ok === true
+                    ? `<span class="text-emerald-400" title="Matches Sleeper"><i class="fa-solid fa-circle-check"></i> Sleeper ${fmtPts(r.check.sleeper)}</span>`
+                    : r.check.ok === false
+                    ? `<span class="text-amber-300"><i class="fa-solid fa-triangle-exclamation"></i> Sleeper shows ${fmtPts(r.check.sleeper)}</span>`
+                    : `<span class="text-slate-500">Sleeper counts ${fmtPts(r.check.sleeper)} (${esc(r.check.note)})</span>`;
+                return `
+                    <div class="flex items-start gap-2 p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                        <span class="shrink-0 w-12 text-center px-1 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-extrabold text-emerald-400">${esc(SLOT_NAMES[r.slot] || r.slot)}</span>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-slate-100 font-bold truncate">${name}${r.p && isLocked(league.players.find(x => x.pid === r.pid)) ? ' <i class="fa-solid fa-lock text-emerald-400 text-[9px]"></i>' : ''}</div>
+                            <div class="text-slate-400">${esc(r.status)}${where}</div>
+                            ${r.st ? `<div class="text-slate-500">${statLine(r.st)}</div>` : ''}
+                            ${chk ? `<div>${chk}</div>` : ''}
+                        </div>
+                        <div class="shrink-0 text-right font-black text-sm ${r.pts == null ? 'text-slate-600' : 'text-white'}">${r.pts == null ? '–' : fmtPts(r.pts)}</div>
+                    </div>`;
+            };
+            body.innerHTML = `
+                ${nba ? `<div class="flex gap-1.5">${tab(0, 'Today')}${tab(1, 'Yesterday')}</div>
+                <div class="text-[11px] text-slate-400">${esc(dayDate.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }))}</div>` : ''}
+                ${rows.map(row).join('')}
+                <div class="flex items-center justify-between pt-1 text-xs">
+                    <span class="font-bold text-slate-300">${nba ? `${dayName}'s total` : 'Week total'}</span>
+                    <span class="font-black text-cyan-200 text-base">${fmtPts(total)}</span>
+                </div>
+                ${myLive && myLive.points != null ? `<div class="text-[11px] text-slate-500">Sleeper's week score for your team: ${fmtPts(Number(myLive.points))}</div>` : ''}
+                ${checks.length ? `<div class="text-[11px] ${bad ? 'text-amber-300' : 'text-emerald-300'}">${bad ? `${bad} score${bad === 1 ? '' : 's'} differ from Sleeper.` : `Scoring check: ${ok} of ${checks.length} finished game${checks.length === 1 ? '' : 's'} match Sleeper exactly.`}</div>` : ''}
+                <button onclick="loadMyTeam()" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200"><i class="fa-solid fa-rotate mr-1 text-cyan-300"></i>Refresh scores</button>`;
+        }
+
         // ---------- Fix my lineup: bench starters with no game, start bench players who play ----------
 
         async function fixLineup() {
@@ -2352,7 +2497,7 @@
         const SLOT_NAMES = { DEF: 'D/ST', FLEX: 'FLEX', WRRB_FLEX: 'W/R FLEX', REC_FLEX: 'W/T FLEX', SUPER_FLEX: 'SUPERFLEX' };
         const OUT_STATUS = /^(out|ir|injured reserve|suspended|pup|na|cov)/i;
 
-        const league = { user: null, leagueId: null, info: null, roster: null, season: null, week: null, players: [], plan: null, timesKnown: false, updated: null, fixes: [], fixOpen: new Set(), fixPanelOpen: false };
+        const league = { user: null, leagueId: null, info: null, roster: null, season: null, week: null, players: [], plan: null, timesKnown: false, updated: null, fixes: [], fixOpen: new Set(), fixPanelOpen: false, teamDay: 0 };
 
         function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
         function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } }
@@ -2369,7 +2514,7 @@
                 const w = scoring?.[k];
                 if (typeof w === 'number' && typeof raw[k] === 'number') t += raw[k] * w;
             }
-            return Number(t.toFixed(1));
+            return Math.round(t * 100) / 100; // Sleeper keeps two decimals
         }
 
         // Points for one game log: exact league scoring when linked and the raw Sleeper line is available
@@ -2507,6 +2652,9 @@
             document.getElementById('lineup-fix-wrap').classList.add('hidden');
             document.getElementById('league-plan-wrap').classList.add('hidden');
             document.getElementById('league-week-badge').classList.add('hidden');
+            document.getElementById('myteam-wrap').open = false;
+            document.getElementById('myteam-body').innerHTML = '';
+            document.getElementById('myteam-sub').textContent = 'Tap to see every starter\'s score';
         }
 
         // Switching NFL <-> NBA: show that sport's league, never the other sport's info
