@@ -1796,7 +1796,13 @@
                 const completed = p.games.filter(g => g.done && !g.benched); // bench games can't be locked
                 p.remPlan = chainPlan(remaining);
                 const last = completed[completed.length - 1];
-                if (last && last.dnp && !last.played) {
+                // A finished game can be locked only until his next game tips off
+                const startedRe = /progress|in_game|live|half/i;
+                const nextStarted = last ? p.games.slice(p.games.indexOf(last) + 1).some(g => g.done || startedRe.test(g.status || '')) : false;
+                p.lockable = last && !nextStarted ? last : null;
+                if (last && nextStarted && remaining.length) {
+                    p.decision = null; // his next game has started: the earlier game can't be locked anymore
+                } else if (last && last.dnp && !last.played) {
                     p.decision = { kind: 'final', text: `No stats from Sleeper yet for his ${fmtDate(`${last.date}T12:00:00`)} game. Tap Refresh in a few minutes before deciding to lock.` };
                 } else if (last && remaining.length) {
                     const v = p.remPlan.value;
@@ -1889,7 +1895,17 @@
                             const idx = st ? steps.indexOf(st) : -1;
                             const next = idx >= 0 ? steps[idx + 1]?.c : null;
                             let advice;
-                            if (g.done) advice = g.dnp ? `<span class="text-slate-400">Final · no stats from Sleeper yet</span>` : `<span class="text-white font-bold">Final · ${g.actual.toFixed(1)} pts</span>${g.benched ? ' <span class="text-slate-500">(on your bench, can\'t lock)</span>' : ''}`;
+                            if (g.done) {
+                                const score = `<span class="text-white font-bold">Final · ${g.actual.toFixed(1)} pts</span>`;
+                                if (g.dnp) advice = `<span class="text-slate-400">Final · no stats from Sleeper yet</span>`;
+                                else if (g.benched) advice = `${score} <span class="text-slate-500">(on your bench, can't lock)</span>`;
+                                else if (p.lockable === g && steps.length) {
+                                    const bar = p.remPlan.value;
+                                    const yes = g.actual >= bar;
+                                    advice = `${score}<br>Lock if <strong class="text-white">${bar.toFixed(1)}+</strong> → <strong class="${yes ? 'text-emerald-300' : 'text-amber-300'}">${yes ? 'lock it' : 'wait'}</strong> <span class="text-slate-500">(until his next game starts)</span>`;
+                                } else if (p.lockable === g) advice = `${score}<br>Last game — counts if nothing's locked`;
+                                else advice = `${score} <span class="text-slate-500">· can no longer lock</span>`;
+                            }
                             else if (st && st.threshold != null) {
                                 const pct = Math.round((1 - normCdf((st.threshold - g.mu) / g.sd)) * 100);
                                 advice = `Lock if <strong class="text-white">${st.threshold.toFixed(1)}+</strong> (~${pct}%), else wait for ${esc(day(next.date))}`;
