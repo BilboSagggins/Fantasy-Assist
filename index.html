@@ -227,6 +227,28 @@
                     </summary>
                     <div id="myteam-body" class="px-3 pb-3 space-y-1.5"></div>
                 </details>
+                <details id="fa-wrap" class="group/fa rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadFreeAgents()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-user-plus text-emerald-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Free agent pickups</div>
+                            <div id="fa-sub" class="text-[11px] text-slate-400">Top 25 free agents vs. your roster</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/fa:rotate-180"></i>
+                    </summary>
+                    <div id="fa-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
+                <details id="ir-wrap" class="group/ir rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadInjuries()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-kit-medical text-rose-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Injuries &amp; IR</div>
+                            <div id="ir-sub" class="text-[11px] text-slate-400">Tap to check injuries and IR moves</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/ir:rotate-180"></i>
+                    </summary>
+                    <div id="ir-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
             </div>
             <details id="league-plan-wrap" class="hidden group">
                 <summary class="cursor-pointer list-none text-[11px] font-semibold text-slate-500 hover:text-slate-300 select-none">
@@ -433,6 +455,7 @@
         };
 
         let playerCache = { nfl: [], nba: [] };
+        const rawPlayers = { nfl: {}, nba: {} }; // every Sleeper player, injured/inactive included
         let isCacheLoaded = { nfl: false, nba: false };
         let teamsCache = { nfl: null, nba: null };
         const scheduleCache = {};
@@ -658,6 +681,16 @@
 
                 for (const key in rawData) {
                     const p = rawData[key];
+                    if (p && (p.full_name || p.last_name)) {
+                        const pos0 = (p.position || '').toUpperCase();
+                        rawPlayers[sport][String(p.player_id || key)] = {
+                            pid: String(p.player_id || key),
+                            name: p.full_name || (pos0 === 'DEF' ? `${p.first_name || ''} ${p.last_name || ''} D/ST`.trim() : `${p.first_name || ''} ${p.last_name || ''}`.trim()),
+                            pos: pos0 === 'DEF' ? 'D/ST' : pos0 === 'PK' ? 'K' : pos0,
+                            fpos: (Array.isArray(p.fantasy_positions) && p.fantasy_positions.length ? p.fantasy_positions : [pos0]).map(x => String(x).toUpperCase()),
+                            team: p.team || '', injury: p.injury_status || '', body: p.injury_body_part || '', notes: p.injury_notes || '', status: p.status || ''
+                        };
+                    }
                     if (!p || !p.full_name) continue;
 
                     const pos = (p.position || '').toUpperCase();
@@ -2088,6 +2121,208 @@
         }
 
 
+
+        // ---------- Injuries & IR ----------
+        function irRule(info) {
+            const st = league.info?.settings || {};
+            const s = String(info?.injury || '').toLowerCase(), ps = String(info?.status || '').toLowerCase();
+            if (/injured reserve|^ir$/.test(s) || ps.includes('injured reserve')) return { ok: true, label: 'IR' };
+            if (s === 'out' || s === 'o') return { ok: !!st.reserve_allow_out, label: 'Out' };
+            if (s.includes('doubt')) return { ok: !!st.reserve_allow_doubtful, label: 'Doubtful' };
+            if (/day|dtd|quest|gtd|probable/.test(s)) return { ok: !!st.reserve_allow_dtd, label: info.injury };
+            if (s.includes('sus') || ps.includes('suspend')) return { ok: !!st.reserve_allow_sus, label: 'Suspended' };
+            if (s.includes('dnr')) return { ok: !!st.reserve_allow_dnr, label: 'DNR' };
+            if (s.includes('cov')) return { ok: !!st.reserve_allow_cov, label: 'COVID' };
+            if (s === 'na' || ps === 'inactive') return { ok: !!st.reserve_allow_na, label: 'Not active' };
+            return { ok: false, label: info?.injury || '' };
+        }
+        const pInfo = pid => rawPlayers[league.sport]?.[pid] || league.players.find(x => x.pid === pid) || { pid, name: `Player #${pid}`, team: '' };
+
+        async function freshRosters() {
+            const rosters = await getJSON(`${SLEEPER}/league/${league.leagueId}/rosters`);
+            const uid = league.user.user_id;
+            const mine = (rosters || []).find(r => r.owner_id === uid) || (rosters || []).find(r => (r.co_owners || []).includes(uid));
+            if (mine) league.roster = mine;
+            return rosters || [];
+        }
+
+        async function loadInjuries() {
+            const body = document.getElementById('ir-body');
+            if (!league.leagueId) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            const tok = league.loadSeq;
+            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Checking injuries...</div>`;
+            try {
+                await loadRosterDirectory(league.sport);
+                await freshRosters();
+                if (tok !== league.loadSeq) return;
+                const st = league.info.settings || {};
+                const slots = Number(st.reserve_slots || 0);
+                const reserve = (league.roster.reserve || []).map(String);
+                const taxi = new Set((league.roster.taxi || []).map(String));
+                const starters = new Set((league.roster.starters || []).map(String));
+                const active = (league.roster.players || []).map(String).filter(pid => !reserve.includes(pid) && !taxi.has(pid));
+                const open = Math.max(0, slots - reserve.length);
+
+                const toIR = [], maybeIR = [], watch = [], activate = [], onIR = [];
+                active.forEach(pid => {
+                    const info = pInfo(pid), r = irRule(info);
+                    if (!info.injury && !/injured|suspend|inactive/i.test(info.status || '')) return;
+                    const row = { pid, info, r, starter: starters.has(pid) };
+                    if (r.ok && /^(IR|Out|Suspended|DNR|COVID|Not active)$/.test(r.label)) toIR.push(row);
+                    else if (r.ok) maybeIR.push(row);
+                    else watch.push(row);
+                });
+                reserve.forEach(pid => {
+                    const info = pInfo(pid), r = irRule(info);
+                    (r.ok ? onIR : activate).push({ pid, info, r });
+                });
+
+                const injTxt = i => i.injury ? [i.injury, i.body].filter(Boolean).join(' · ') : (/active/i.test(i.status || '') || !i.status ? 'Healthy' : i.status);
+                const card = (row, advice, tone) => `
+                    <div class="p-2 rounded-lg bg-slate-950/60 border ${tone} text-[11px] space-y-0.5">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="font-bold text-slate-100 truncate">${esc(row.info.name)} <span class="font-normal text-slate-400">${esc(row.info.team || '')}${row.starter ? ' · in your lineup' : ''}</span></span>
+                            <span class="shrink-0 px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 text-[10px] font-bold">${esc(injTxt(row.info) || 'Injured')}</span>
+                        </div>
+                        ${row.info.notes ? `<div class="text-slate-500">${esc(row.info.notes)}</div>` : ''}
+                        <div class="text-slate-200">${advice}</div>
+                    </div>`;
+                const parts = [];
+                if (activate.length) parts.push(`<div class="text-[11px] font-bold text-amber-300 pt-1"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Must come off IR</div>` + activate.map(x => card(x, `<strong>Activate him.</strong> He's no longer IR-eligible${x.r.label ? ` (${esc(x.r.label)})` : ' (healthy)'}, and Sleeper blocks adds and drops until he's moved off IR.`, 'border-amber-500/50')).join(''));
+                if (toIR.length) parts.push(`<div class="text-[11px] font-bold text-rose-300 pt-1"><i class="fa-solid fa-kit-medical mr-1"></i>Move to IR</div>` + toIR.map((x, k) => card(x, k < open ? `<strong>Move him to IR</strong> to free a roster spot.${x.starter ? ' Take him out of your lineup first.' : ''}` : `Eligible for IR, but your IR is full (${reserve.length}/${slots}).`, 'border-rose-500/40')).join(''));
+                if (maybeIR.length) parts.push(`<div class="text-[11px] font-bold text-slate-300 pt-1">Could go on IR</div>` + maybeIR.map(x => card(x, `${esc(x.r.label)} is IR-eligible in your league, but he may play soon. Only move him if you need the roster spot for a pickup.${open ? '' : ' (IR is full.)'}`, 'border-slate-700')).join(''));
+                if (watch.length) parts.push(`<div class="text-[11px] font-bold text-slate-300 pt-1">Keep an eye on</div>` + watch.map(x => card(x, `${esc(x.r.label || 'Injured')} isn't IR-eligible in your league. Check his status before his next game.`, 'border-slate-700')).join(''));
+                if (onIR.length) parts.push(`<div class="text-[11px] font-bold text-slate-400 pt-1">On your IR</div>` + onIR.map(x => card(x, `Fine to stay on IR (${esc(x.r.label)}).`, 'border-slate-800')).join(''));
+
+                const nMove = Math.min(toIR.length, open);
+                document.getElementById('ir-sub').textContent = activate.length ? `${activate.length} must come off IR`
+                    : nMove ? `${nMove} to move to IR · IR ${reserve.length}/${slots}` : `IR ${reserve.length}/${slots} · ${toIR.length + maybeIR.length + watch.length} injured`;
+                body.innerHTML = `
+                    <div class="text-[11px] text-slate-400">IR spots: <strong class="text-slate-200">${reserve.length} of ${slots} used</strong>. Allowed on IR in your league: ${[['Out', st.reserve_allow_out], ['Day-to-Day', st.reserve_allow_dtd], ['Doubtful', st.reserve_allow_doubtful], ['Suspended', st.reserve_allow_sus], ['DNR', st.reserve_allow_dnr], ['COVID', st.reserve_allow_cov], ['Not active', st.reserve_allow_na]].filter(x => x[1]).map(x => x[0]).concat(['IR']).join(', ')}.</div>
+                    ${parts.join('') || `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>No injuries on your roster.</div>`}
+                    <a href="https://sleeper.com/leagues/${encodeURIComponent(league.leagueId)}/team" target="_blank" rel="noopener" class="block text-center py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Sleeper</a>`;
+            } catch (e) {
+                body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't check injuries: ${esc(e.message)}</div>`;
+            }
+        }
+
+        // ---------- Free agent pickups ----------
+        async function projWeek(sport, season, week) {
+            const pos = sport === 'nba' ? ['PG', 'SG', 'SF', 'PF', 'C'] : ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
+            const d = await getJSON(`${SLEEPER_API}/projections/${sport}/${season}/${week}?season_type=regular&${pos.map(x => `position[]=${x}`).join('&')}`).catch(() => []);
+            return Array.isArray(d) ? d : [];
+        }
+
+        async function loadFreeAgents() {
+            const body = document.getElementById('fa-body');
+            if (!league.leagueId) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            const tok = league.loadSeq;
+            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Comparing free agents to your roster...</div>`;
+            try {
+                const sport = league.sport, season = league.season, week = Number(league.week) || 1;
+                const nba = sport === 'nba';
+                const scoring = nba ? nbaLeagueScoring : leagueScoring;
+                await loadRosterDirectory(sport);
+                const [rosters, w1, w2, trend] = await Promise.all([
+                    freshRosters(), projWeek(sport, season, week), projWeek(sport, season, week + 1),
+                    getJSON(`${SLEEPER}/players/${sport}/trending/add?lookback_hours=24&limit=100`).catch(() => [])
+                ]);
+                if (tok !== league.loadSeq) return;
+                const rostered = new Set(rosters.flatMap(r => [...(r.players || []), ...(r.reserve || []), ...(r.taxi || [])]).map(String));
+                const trending = {};
+                (trend || []).forEach(t => { trending[String(t.player_id)] = t.count; });
+                const today = ymdLocal(new Date());
+                const pts = stats => scoring ? leaguePoints(stats, scoring) : (nba ? calculateNBAPoints(sleeperNbaStats(stats)) : num(stats.pts_ppr));
+
+                // Per player: average projected fantasy points per game over this week and next, and games left this week
+                const agg = {};
+                const add = (e, thisWeek) => {
+                    if (!e || !e.player_id || !e.stats) return;
+                    const pid = String(e.player_id);
+                    const a = agg[pid] = agg[pid] || { pid, sum: 0, n: 0, left: 0, next: 0, team: e.team || e.player?.team, inj: e.player?.injury_status || '' };
+                    if (nba && thisWeek && e.date && e.date < today) return; // games already played this week
+                    const v = pts(e.stats);
+                    if (v <= 0) return;
+                    a.sum += v; a.n++;
+                    if (thisWeek) a.left++; else a.next++;
+                };
+                w1.forEach(e => add(e, true));
+                w2.forEach(e => add(e, false));
+                const valueOf = pid => { const a = agg[pid]; return a && a.n ? a.sum / a.n : 0; };
+
+                const raw = rawPlayers[sport];
+                const fas = Object.values(agg)
+                    .filter(a => a.n && !rostered.has(a.pid) && raw[a.pid] && raw[a.pid].team)
+                    .map(a => ({ ...a, info: raw[a.pid], ppg: a.sum / a.n, trend: trending[a.pid] || 0 }))
+                    .sort((x, y) => y.ppg - x.ppg)
+                    .slice(0, 25);
+
+                const reserve = new Set((league.roster.reserve || []).map(String));
+                const taxi = new Set((league.roster.taxi || []).map(String));
+                const mine = (league.roster.players || []).map(String).filter(pid => !reserve.has(pid) && !taxi.has(pid))
+                    .map(pid => {
+                        const info = pInfo(pid);
+                        const pl = league.players.find(x => x.pid === pid);
+                        return { pid, info, ppg: valueOf(pid), left: agg[pid]?.left || 0, locked: isLocked(pl), ir: irRule(info).ok };
+                    })
+                    .sort((x, y) => x.ppg - y.ppg);
+
+                // Pair the best free agents with your weakest droppable players
+                const margin = nba ? 2 : 1.5;
+                const drops = mine.filter(m => !m.locked);
+                const used = new Set();
+                const moves = [];
+                fas.forEach(fa => {
+                    if (moves.length >= 5) return;
+                    const d = drops.find(m => !used.has(m.pid) && fa.ppg - m.ppg >= margin);
+                    if (!d) return;
+                    used.add(d.pid);
+                    moves.push({ fa, drop: d, gain: fa.ppg - d.ppg });
+                });
+
+                const posTxt = info => esc((info.fpos && info.fpos.length ? info.fpos : [info.pos]).join('/'));
+                const gamesTxt = a => nba ? `${a.left} game${a.left === 1 ? '' : 's'} left this week` : (a.left ? 'plays this week' : 'no game this week');
+                const moveCard = m => `
+                    <div class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-[11px] space-y-1">
+                        <div class="flex items-center justify-between gap-2"><span class="font-bold text-emerald-200"><i class="fa-solid fa-plus mr-1"></i>Add ${esc(m.fa.info.name)}</span><span class="font-black text-emerald-300">+${m.gain.toFixed(1)}/game</span></div>
+                        <div class="text-slate-300">${esc(m.fa.info.team)} ${posTxt(m.fa.info)} · <strong>${m.fa.ppg.toFixed(1)}</strong> proj/game · ${gamesTxt(m.fa)}${m.fa.trend ? ` · <span class="text-cyan-300">+${m.fa.trend} adds in 24h</span>` : ''}${m.fa.inj ? ` · <span class="text-rose-300">${esc(m.fa.inj)}</span>` : ''}</div>
+                        <div class="text-rose-300"><i class="fa-solid fa-minus mr-1"></i>Drop ${esc(m.drop.info.name)} <span class="text-slate-400">${esc(m.drop.info.team || '')} · ${m.drop.ppg ? `${m.drop.ppg.toFixed(1)} proj/game` : 'no projection'} · ${gamesTxt(m.drop)}</span></div>
+                        ${m.drop.ir ? `<div class="text-amber-300">${esc(m.drop.info.name)} is IR-eligible: move him to IR instead of dropping him, if you have a spot.</div>` : ''}
+                    </div>`;
+                const faRow = (a, i) => `
+                    <div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                        <span class="w-5 text-right text-slate-500 font-bold">${i + 1}</span>
+                        <div class="flex-1 min-w-0">
+                            <div class="font-bold text-slate-100 truncate">${esc(a.info.name)} <span class="font-normal text-slate-400">${esc(a.info.team)} ${posTxt(a.info)}</span></div>
+                            <div class="text-slate-500">${gamesTxt(a)}${a.trend ? ` · <span class="text-cyan-300">+${a.trend} adds</span>` : ''}${a.inj ? ` · <span class="text-rose-300">${esc(a.inj)}</span>` : ''}</div>
+                        </div>
+                        <span class="shrink-0 font-black text-emerald-300">${a.ppg.toFixed(1)}</span>
+                    </div>`;
+                const mineRow = m => `
+                    <div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                        <div class="flex-1 min-w-0"><span class="font-bold text-slate-200">${esc(m.info.name)}</span> <span class="text-slate-500">${esc(m.info.team || '')} · ${gamesTxt(m)}${m.locked ? ' · locked' : ''}${m.info.injury ? ` · <span class="text-rose-300">${esc(m.info.injury)}</span>` : ''}</span></div>
+                        <span class="shrink-0 font-black text-slate-300">${m.ppg ? m.ppg.toFixed(1) : '–'}</span>
+                    </div>`;
+
+                document.getElementById('fa-sub').textContent = moves.length ? `${moves.length} suggested pickup${moves.length === 1 ? '' : 's'}` : 'No pickups beat your roster right now';
+                body.innerHTML = `
+                    <div class="text-[11px] text-slate-400">Compares Sleeper's per-game projections (this week and next, in your league's scoring). Suggests a pickup when a free agent projects at least ${margin} pts/game more than one of your players. Locked players are never suggested as drops.</div>
+                    ${moves.length ? `<div class="text-[11px] font-bold text-emerald-300 pt-1">Suggested moves</div>${moves.map(moveCard).join('')}` : `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>None of the top free agents projects ${margin}+ pts/game better than your weakest players.</div>`}
+                    <details class="group/fal">
+                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Top 25 free agents <span class="text-slate-500 font-normal">proj/game <i class="fa-solid fa-chevron-down ml-1 transition group-open/fal:rotate-180"></i></span></summary>
+                        <div class="mt-1.5 space-y-1">${fas.map(faRow).join('')}</div>
+                    </details>
+                    <details class="group/fam">
+                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Your roster, weakest first <span class="text-slate-500 font-normal">proj/game <i class="fa-solid fa-chevron-down ml-1 transition group-open/fam:rotate-180"></i></span></summary>
+                        <div class="mt-1.5 space-y-1">${mine.map(mineRow).join('')}</div>
+                    </details>
+                    <div class="text-[11px] text-slate-500">Players picked up after their game starts may go to waivers (your league uses ${league.info.settings?.waiver_type === 2 ? `FAAB, $${league.info.settings?.waiver_budget || ''} budget` : 'waivers'}).</div>
+                    <a href="https://sleeper.com/leagues/${encodeURIComponent(league.leagueId)}/players" target="_blank" rel="noopener" class="block text-center py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Sleeper players</a>`;
+            } catch (e) {
+                body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load free agents: ${esc(e.message)}</div>`;
+            }
+        }
+
         // ---------- My lineup scores ----------
         const ymdLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const fmtPts = v => (Math.round(v * 100) / 100).toFixed(Math.abs(v * 10 - Math.round(v * 10)) > 1e-9 ? 2 : 1);
@@ -2768,6 +3003,9 @@
             document.getElementById('myteam-wrap').open = false;
             document.getElementById('myteam-body').innerHTML = '';
             document.getElementById('myteam-sub').textContent = 'Tap to see every starter\'s score';
+            ['fa', 'ir'].forEach(k => { document.getElementById(`${k}-wrap`).open = false; document.getElementById(`${k}-body`).innerHTML = ''; });
+            document.getElementById('fa-sub').textContent = 'Top 25 free agents vs. your roster';
+            document.getElementById('ir-sub').textContent = 'Tap to check injuries and IR moves';
         }
 
         // Switching NFL <-> NBA: show that sport's league, never the other sport's info
@@ -2818,6 +3056,7 @@
                 else await buildLockPlan(true);
                 if (tok !== league.loadSeq) return;
                 fixLineup();
+                loadInjuries(); // fills the IR summary line
             } catch (e) {
                 if (league.leagueId === leagueId) setLeagueMsg(`Couldn't load league: ${e.message}`, true);
             }
