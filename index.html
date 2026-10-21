@@ -5558,7 +5558,23 @@
         function mwSteps0(sport) { const s0 = MW_SLOTS[sport].find(([k]) => (manualSaved(sport)?.slots?.[k] || 0) > 0); return s0 ? s0[0] : 'scoring'; }
         function mwAllPicked() { return [...Object.values(mw.picks).flat(), ...mw.bench, ...mw.ir]; }
         function mwListFor(k) { return k === 'BN' ? mw.bench : k === 'IR' ? mw.ir : (mw.picks[k] = mw.picks[k] || []); }
-        function mwPlayer(id) { return (playerCache[mw.sport] || []).find(p => String(p.id) === String(id)); }
+        // Everyone who can be on a fantasy roster: active players plus those on IR, PUP, suspended or
+        // inactive (the main player list leaves those out, but they're often stashed on teams)
+        const manualPoolCache = {};
+        function manualPool(sport) {
+            const cache = playerCache[sport] || [];
+            if (manualPoolCache[sport]?.n === cache.length) return manualPoolCache[sport].list;
+            const have = new Set(cache.map(p => String(p.sleeperId || p.id)));
+            const extra = Object.values(rawPlayers[sport] || {}).filter(r => {
+                if (have.has(r.pid) || !ALLOWED_POSITIONS[sport].includes(r.pos === 'K' ? 'K' : r.pos)) return false;
+                const st = String(r.status || '').toLowerCase();
+                return r.team || /reserve|injur|pup|physically|suspend|non football/.test(st);
+            }).map(r => ({ id: r.pid, sleeperId: r.pid, name: r.name, pos: r.pos, fpos: r.fpos, team: r.team || 'FA', sport, injury: r.injury || (/reserve/i.test(r.status) ? 'IR' : ''), searchName: normName(r.name) }));
+            const list = [...cache, ...extra];
+            manualPoolCache[sport] = { n: cache.length, list };
+            return list;
+        }
+        function mwPlayer(id) { return manualPool(mw.sport).find(p => String(p.id) === String(id)); }
         function mwFits(p, k) {
             if (k === 'BN' || k === 'IR') return true;
             if (mw.sport === 'nba') return nbaFits(p, k);
@@ -5649,7 +5665,7 @@
             const k = mwSteps()[mw.step];
             if (q.length < 2) { out.innerHTML = ''; return; }
             const taken = new Set(mwAllPicked().map(String));
-            const hits = (playerCache[mw.sport] || []).filter(p => !taken.has(String(p.id)) && mwFits(p, k) && normName(p.name).includes(q)).slice(0, 8);
+            const hits = manualPool(mw.sport).filter(p => !taken.has(String(p.id)) && mwFits(p, k) && normName(p.name).includes(q)).slice(0, 8);
             out.innerHTML = hits.length ? hits.map(p => `<button onclick="mwAdd('${k}', '${esc(String(p.id))}')" class="w-full flex items-center gap-2 p-2 rounded-lg bg-slate-950/60 border border-slate-800 hover:border-emerald-500 text-left text-[12px]">
                     <i class="fa-solid fa-plus text-emerald-400 text-[10px]"></i><span class="font-bold text-slate-100">${esc(p.name)}</span><span class="text-slate-500">${esc(p.team)} ${esc((p.fpos || [p.pos]).join('/'))}</span>${p.injury ? `<span class="text-rose-300 text-[10px]">${esc(p.injury)}</span>` : ''}</button>`).join('')
                 : `<div class="text-[11px] text-slate-500">No ${k === 'BN' || k === 'IR' ? '' : esc(k) + ' '}players match.</div>`;
@@ -5708,7 +5724,7 @@
                     espn.season = season; espn.period = week;
                     const [{ map: kick }, proj] = await Promise.all([getKickoffs(season, week), getSleeperProjections(season, week).catch(() => ({}))]);
                     roster = await Promise.all(entries.map(async ([pid, slot]) => {
-                        const p = playerCache.nfl.find(x => String(x.id) === String(pid));
+                        const p = manualPool('nfl').find(x => String(x.id) === String(pid));
                         if (!p) return null;
                         const sid = p.pos === 'D/ST' ? p.team : String(p.sleeperId);
                         const k = kick[p.team] || kick[ABBR_ALIASES[p.team]];
@@ -5735,7 +5751,7 @@
                     espn.period = week;
                     const pw = await projWeek('nba', season, week);
                     roster = await Promise.all(entries.map(async ([pid, slot]) => {
-                        const p = playerCache.nba.find(x => String(x.id) === String(pid));
+                        const p = manualPool('nba').find(x => String(x.id) === String(pid));
                         if (!p) return null;
                         const sid = String(p.sleeperId);
                         const g = todays.find(x => nbaPlays(p.team, x));
