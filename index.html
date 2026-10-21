@@ -361,10 +361,11 @@
                         class="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
                     <button onclick="connectEspn()" class="shrink-0 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition">Connect</button>
                 </div>
-                <div class="text-[11px] text-slate-500">The ID is the number after <span class="text-slate-300">leagueId=</span> in your league's web link. Only public leagues can be read.</div>
+                <div class="text-[11px] text-slate-500">The ID is the number after <span class="text-slate-300">leagueId=</span> in your league's web link. Only public leagues can be read. League is private? <button onclick="espnStartManual(espn.sport)" class="underline text-emerald-300">Enter your team by hand</button></div>
             </div>
             <div id="espn-msg" class="text-xs text-slate-400">Enter your ESPN league ID to check your lineup, free agents and injuries.</div>
             <div id="espn-teams" class="hidden space-y-1.5"></div>
+            <div id="espn-manual" class="hidden space-y-2"></div>
             <div id="espn-cards" class="hidden space-y-2">
                 <label class="flex items-center justify-end gap-2 text-[11px] text-slate-400 select-none cursor-pointer">
                     Auto-collapse cards
@@ -379,6 +380,7 @@
                     <a id="espn-open" href="#" target="_blank" rel="noopener" class="flex-1 text-center py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open ESPN</a>
                     <button onclick="espnRefresh()" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold"><i class="fa-solid fa-rotate mr-1"></i>Check again</button>
                 </div>
+                <button id="espn-edit-lineup" onclick="espnStartManual(espn.sport, mwSteps0(espn.sport))" class="hidden w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-700/60 text-emerald-200 text-xs font-bold"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit my lineup</button>
                 <details data-card id="espn-team-wrap" class="group/et rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadScores()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-users text-cyan-300"></i>
@@ -5019,6 +5021,7 @@
             }).join('');
         }
         function removeEspnLeague(sport, id) {
+            if (id === 'manual') { try { localStorage.removeItem(manualKey(sport)); } catch (e) { /* storage blocked */ } }
             espnSave(espnSaved().filter(l => espnKey(l.sport, l.id) !== espnKey(sport, id)));
             if (espn.sport === sport && String(espn.leagueId) === String(id)) {
                 espn.leagueId = null; espn.data = null;
@@ -5043,7 +5046,10 @@
                     const ok = await openEspnLeague(sport, id, true);
                     if (ok) { document.getElementById('espn-league-id').value = ''; return; }
                 } catch (e) {
-                    if (e.code === 'private') { espnMsg(esc(e.message), true); return; }
+                    if (e.code === 'private') {
+                        espnMsg(`${esc(e.message)} You can still get lineup advice by entering your team by hand. <button onclick="espnStartManual('${sport}')" class="underline font-bold text-emerald-300">Enter my team</button>`, true);
+                        return;
+                    }
                 }
             }
             espnMsg(`Couldn't find ESPN league ${esc(id)} for this season. Check the number, and that the league is public.`, true);
@@ -5051,6 +5057,11 @@
 
         // Load a league's settings and teams. Returns true when found.
         async function openEspnLeague(sport, id, fromConnect) {
+            if (id === 'manual') return espnOpenManual(sport);
+            espn.manual = false;
+            document.getElementById('espn-fa-wrap').classList.remove('hidden');
+            document.getElementById('espn-edit-lineup').classList.add('hidden');
+            mw = null; renderManual();
             espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading your ESPN league...');
             let data = null, season = null, lastErr = null;
             for (const s of espnSeasons(sport)) {
@@ -5110,7 +5121,7 @@
                     <i class="fa-solid fa-chevron-right text-slate-500 text-xs"></i>
                 </button>`).join('');
         }
-        function espnPickTeamAgain() { if (espn.data) showEspnTeamPicker(); }
+        function espnPickTeamAgain() { if (espn.manual) espnStartManual(espn.sport); else if (espn.data) showEspnTeamPicker(); }
         async function pickEspnTeam(teamId) {
             espn.teamId = teamId;
             const list = espnSaved();
@@ -5162,6 +5173,7 @@
             const vs = `${g.home ? 'vs' : '@'} ${esc(g.opp)}`;
             if (g.final) return `${vs} · Final`;
             if (g.started) return `${vs} · <span class="text-amber-300">Live</span>`;
+            if (g.noTime) return `${vs} · today`;
             const d = new Date(g.date);
             const when = sport === 'nfl'
                 ? d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
@@ -5224,6 +5236,7 @@
         }
         async function espnRefresh() {
             if (!espn.leagueId) return;
+            if (espn.manual) return espnOpenManual(espn.sport);
             try {
                 const d = await espnFetch(`${espnBase()}?view=mSettings&view=mTeam&view=mStatus`);
                 if (d?.settings) { espn.data = d; espn.period = d.scoringPeriodId || espn.period; }
@@ -5331,7 +5344,7 @@
             const starters = espn.roster.filter(p => p.slot !== bench && p.slot !== ir).sort((a, b) => rank(a.slot) - rank(b.slot));
             const benchP = espn.roster.filter(p => p.slot === bench);
             let matchHtml = '';
-            try {
+            if (!espn.manual) try {
                 const mp = espn.data?.status?.currentMatchupPeriod;
                 const d = await espnFetch(`${espnBase()}?view=mMatchupScore&scoringPeriodId=${espn.period}`);
                 const m = (d.schedule || []).find(x => x.matchupPeriodId === mp && (x.home?.teamId === espn.teamId || x.away?.teamId === espn.teamId));
@@ -5360,7 +5373,7 @@
                 <div class="text-[11px] font-bold text-slate-300 pt-1">Starters</div>${starters.map(line).join('')}
                 <details class="group/eb"><summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Bench (${benchP.length}) <i class="fa-solid fa-chevron-down text-slate-500 transition group-open/eb:rotate-180"></i></summary>
                     <div class="mt-1.5 space-y-1">${benchP.map(line).join('')}</div></details>
-                <div class="text-[11px] text-slate-500">Scores and projections come straight from ESPN, in your league's scoring.</div>`;
+                <div class="text-[11px] text-slate-500">Scores and projections come straight from ${espn.manual ? 'Sleeper, using the scoring you entered' : "ESPN, in your league's scoring"}.</div>`;
         }
 
         // ---- Free Agents ----
@@ -5480,6 +5493,297 @@
                     </div>`).join('') : `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>Nobody on your roster has an injury tag.</div>`}`;
         }
 
+
+        // ---------- Private ESPN leagues: enter your team by hand ----------
+        // ESPN won't share a private league, so you tell the app your scoring, lineup slots and
+        // players once. Projections and scores then come from Sleeper, in your scoring.
+        const MW_SLOTS = {
+            nfl: [['QB', 0, 'QB'], ['RB', 2, 'RB'], ['WR', 4, 'WR'], ['TE', 6, 'TE'], ['FLEX', 23, 'Flex (RB/WR/TE)'], ['OP', 7, 'Superflex (QB/RB/WR/TE)'], ['D/ST', 16, 'D/ST'], ['K', 17, 'Kicker']],
+            nba: [['PG', 0, 'PG'], ['SG', 1, 'SG'], ['SF', 2, 'SF'], ['PF', 3, 'PF'], ['C', 4, 'C'], ['G', 5, 'G (PG/SG)'], ['F', 6, 'F (SF/PF)'], ['UTIL', 11, 'UTIL (any)']]
+        };
+        const MW_DEFAULT_SLOTS = {
+            nfl: { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, OP: 0, 'D/ST': 1, K: 1, BN: 7, IR: 1 },
+            nba: { PG: 1, SG: 1, SF: 1, PF: 1, C: 1, G: 1, F: 1, UTIL: 3, BN: 3, IR: 1 }
+        };
+        const MW_NFL_FITS = { QB: ['QB'], RB: ['RB'], WR: ['WR'], TE: ['TE'], FLEX: ['RB', 'WR', 'TE'], OP: ['QB', 'RB', 'WR', 'TE'], 'D/ST': ['D/ST'], K: ['K'] };
+        const MW_NBA_PRESETS = {
+            espn: { label: 'ESPN default', s: { pts: 1, tpm: 1, fgm: 2, fga: -1, ftm: 1, fta: -1, reb: 1, ast: 2, stl: 4, blk: 4, to: -2 } },
+            sleeper: { label: 'Sleeper / Yahoo style', s: { pts: 1, tpm: 0.5, reb: 1.2, ast: 1.5, stl: 3, blk: 3, to: -1 } }
+        };
+        const MW_NBA_CATS = [['pts', 'Point'], ['tpm', '3-pointer made'], ['fgm', 'Field goal made'], ['fga', 'Field goal attempt'], ['ftm', 'Free throw made'], ['fta', 'Free throw attempt'], ['reb', 'Rebound'], ['ast', 'Assist'], ['stl', 'Steal'], ['blk', 'Block'], ['to', 'Turnover']];
+
+        function manualScoring(sport, sc) {
+            if (sport === 'nba') return { ...(sc.custom || MW_NBA_PRESETS.espn.s) };
+            const o = sc;
+            return {
+                pass_yd: 1 / (o.passYds || 25), pass_td: o.passTd ?? 4, pass_int: o.int ?? -2, pass_2pt: 2,
+                rush_yd: 0.1, rush_td: 6, rush_2pt: 2, rec: o.rec ?? 1, rec_yd: 0.1, rec_td: 6, rec_2pt: 2, fum_lost: o.fum ?? -2,
+                bonus_rec_te: o.te || 0,
+                fgm_0_19: 3, fgm_20_29: 3, fgm_30_39: 3, fgm_40_49: 4, fgm_50p: 5, xpm: 1, fgmiss: -1, xpmiss: -1,
+                sack: 1, int: 2, fum_rec: 2, def_td: 6, def_st_td: 6, st_td: 6, safe: 2, blk_kick: 2,
+                pts_allow_0: 5, pts_allow_1_6: 4, pts_allow_7_13: 3, pts_allow_14_20: 1, pts_allow_21_27: 0, pts_allow_28_34: -1, pts_allow_35p: -4
+            };
+        }
+        function manualKey(sport) { return `rosteriq_manual_${sport}`; }
+        function manualSaved(sport) { return readJSON(manualKey(sport)); }
+
+        let mw = null; // the setup being edited
+        function espnStartManual(sport, startAt) {
+            const saved = manualSaved(sport);
+            mw = saved ? JSON.parse(JSON.stringify(saved)) : {
+                sport, teamName: '',
+                scoring: sport === 'nfl' ? { rec: 1, passTd: 4, passYds: 25, int: -2, fum: -2, te: 0 } : { preset: 'espn', custom: { ...MW_NBA_PRESETS.espn.s } },
+                slots: { ...MW_DEFAULT_SLOTS[sport] }, picks: {}, bench: [], ir: []
+            };
+            mw.step = 0;
+            if (startAt) { const i = mwSteps().indexOf(startAt); if (i >= 0) mw.step = i; }
+            document.getElementById('espn-cards').classList.add('hidden');
+            document.getElementById('espn-teams').classList.add('hidden');
+            document.getElementById('espn-connect').classList.add('hidden');
+            espnMsg(`Your league is private, so set up your team here once. ${sport === 'nfl' ? 'Football' : 'Basketball'} projections come from Sleeper, in your league's scoring.`);
+            loadRosterDirectory(sport).then(() => renderManual());
+            renderManual();
+        }
+        function mwSteps() {
+            const slotSteps = MW_SLOTS[mw.sport].filter(([k]) => (mw.slots[k] || 0) > 0).map(([k]) => k);
+            return ['scoring', 'slots', ...slotSteps, ...(mw.slots.BN ? ['BN'] : []), ...(mw.slots.IR ? ['IR'] : [])];
+        }
+        function mwLabel(k) {
+            if (k === 'scoring') return 'Scoring';
+            if (k === 'slots') return 'Lineup slots';
+            if (k === 'BN') return 'Bench';
+            if (k === 'IR') return 'IR';
+            return k;
+        }
+        function mwSteps0(sport) { const s0 = MW_SLOTS[sport].find(([k]) => (manualSaved(sport)?.slots?.[k] || 0) > 0); return s0 ? s0[0] : 'scoring'; }
+        function mwAllPicked() { return [...Object.values(mw.picks).flat(), ...mw.bench, ...mw.ir]; }
+        function mwListFor(k) { return k === 'BN' ? mw.bench : k === 'IR' ? mw.ir : (mw.picks[k] = mw.picks[k] || []); }
+        function mwPlayer(id) { return (playerCache[mw.sport] || []).find(p => String(p.id) === String(id)); }
+        function mwFits(p, k) {
+            if (k === 'BN' || k === 'IR') return true;
+            if (mw.sport === 'nba') return nbaFits(p, k);
+            return (MW_NFL_FITS[k] || []).includes(p.pos);
+        }
+
+        function renderManual() {
+            const box = document.getElementById('espn-manual');
+            if (!mw) { box.classList.add('hidden'); return; }
+            box.classList.remove('hidden');
+            const steps = mwSteps();
+            mw.step = Math.min(mw.step, steps.length - 1);
+            const k = steps[mw.step];
+            const seg = (cur, opts, fn) => `<div class="flex flex-wrap gap-1">${opts.map(([v, l]) => `<button onclick="${fn}(${JSON.stringify(v).replace(/"/g, '&quot;')})" class="px-2.5 py-1.5 rounded-lg text-[11px] font-bold border ${cur === v ? 'bg-emerald-500 text-slate-950 border-emerald-500' : 'bg-slate-950 text-slate-300 border-slate-700'}">${l}</button>`).join('')}</div>`;
+            let html = '';
+            if (k === 'scoring') {
+                if (mw.sport === 'nfl') {
+                    const o = mw.scoring;
+                    const row = (label, key, opts) => `<div class="space-y-1"><div class="text-[11px] text-slate-400">${label}</div>${seg(o[key], opts, `mwSetScore.bind(null,'${key}')`)}</div>`;
+                    html = `
+                        <div class="text-sm font-bold text-white">How does your league score?</div>
+                        ${row('Points per catch', 'rec', [[0, 'Standard (0)'], [0.5, 'Half PPR (0.5)'], [1, 'PPR (1)']])}
+                        <div class="text-[11px] font-bold text-slate-300 pt-1">Any other rule changes?</div>
+                        ${row('Passing touchdown', 'passTd', [[4, '4 pts'], [6, '6 pts']])}
+                        ${row('Passing yards', 'passYds', [[25, '1 pt per 25 yds'], [20, '1 pt per 20 yds']])}
+                        ${row('Interception thrown', 'int', [[-2, '−2'], [-1, '−1'], [0, '0']])}
+                        ${row('Fumble lost', 'fum', [[-2, '−2'], [-1, '−1'], [0, '0']])}
+                        ${row('Tight end bonus per catch', 'te', [[0, 'None'], [0.5, '+0.5'], [1, '+1']])}
+                        <div class="text-[11px] text-slate-500">Everything else uses ESPN's standard scoring: 6 pts per rushing or receiving TD, 1 per 10 rushing or receiving yards, ESPN's kicker and D/ST scoring.</div>`;
+                } else {
+                    const sc = mw.scoring;
+                    html = `
+                        <div class="text-sm font-bold text-white">How does your league score?</div>
+                        ${seg(sc.preset, [['espn', 'ESPN default'], ['sleeper', 'Sleeper / Yahoo style'], ['custom', 'Custom']], 'mwSetNbaPreset')}
+                        <div class="text-[11px] text-slate-400 pt-1">Points per stat${sc.preset === 'custom' ? ' (edit any number)' : ' · change any number to make it custom'}:</div>
+                        <div class="grid grid-cols-2 gap-1.5">${MW_NBA_CATS.map(([c, l]) => `<label class="flex items-center justify-between gap-1 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px] text-slate-300">${l}
+                            <input type="number" step="0.1" inputmode="decimal" value="${sc.custom[c] ?? 0}" onchange="mwSetNbaCat('${c}', this.value)" class="w-14 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-right text-base sm:text-[11px] text-white"></label>`).join('')}</div>`;
+                }
+                html += `<label class="block space-y-1 pt-1"><span class="text-[11px] text-slate-400">Team name (optional)</span>
+                    <input value="${esc(mw.teamName || '')}" oninput="mw.teamName = this.value" placeholder="My team" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-sm text-white"></label>`;
+            } else if (k === 'slots') {
+                const step = (key, label) => `<div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[12px]">
+                        <span class="text-slate-200 font-bold">${label}</span>
+                        <div class="flex items-center gap-2"><button onclick="mwSlot('${key}', -1)" class="w-7 h-7 rounded-lg bg-slate-800 text-white font-black">−</button><span class="w-5 text-center font-black text-emerald-300">${mw.slots[key] || 0}</span><button onclick="mwSlot('${key}', 1)" class="w-7 h-7 rounded-lg bg-slate-800 text-white font-black">+</button></div>
+                    </div>`;
+                html = `<div class="text-sm font-bold text-white">How many of each lineup slot does your league use?</div>
+                    <div class="space-y-1.5">${MW_SLOTS[mw.sport].map(([key, , label]) => step(key, label)).join('')}${step('BN', 'Bench')}${step('IR', 'IR')}</div>`;
+            } else {
+                const list = mwListFor(k);
+                const cap = mw.slots[k] || 0;
+                const label = k === 'BN' ? 'bench' : k === 'IR' ? 'IR' : (MW_SLOTS[mw.sport].find(x => x[0] === k)?.[2] || k);
+                const q = k === 'BN' ? `Who's on your bench? (up to ${cap})` : k === 'IR' ? `Anyone in your IR slot? (up to ${cap})` : `Who's in your ${label} slot${cap > 1 ? 's' : ''}? (${cap})`;
+                html = `<div class="text-sm font-bold text-white">${q}</div>
+                    <div class="space-y-1">${list.map(id => { const p = mwPlayer(id); return `<div class="flex items-center gap-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-[12px]">
+                        <span class="flex-1 min-w-0 truncate font-bold text-emerald-100">${esc(p?.name || id)} <span class="font-normal text-slate-400">${esc(p?.team || '')} ${esc((p?.fpos || [p?.pos || '']).join('/'))}</span></span>
+                        <button onclick="mwRemove('${k}', '${esc(String(id))}')" class="shrink-0 text-slate-400 hover:text-rose-300"><i class="fa-solid fa-xmark"></i></button></div>`; }).join('')}</div>
+                    ${list.length < cap ? `<input id="mw-search" type="text" autocomplete="off" placeholder="Search players" oninput="mwSearch()" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-sm text-white placeholder-slate-500">
+                    <div id="mw-results" class="space-y-1"></div>` : `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>${cap > 1 ? 'All filled.' : 'Filled.'} Tap Next.</div>`}
+                    ${!isCacheLoaded[mw.sport] ? `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading the player list...</div>` : ''}`;
+            }
+            const last = mw.step === steps.length - 1;
+            box.innerHTML = `
+                <div class="flex flex-wrap gap-1">${steps.map((s, i) => `<button onclick="mwGo(${i})" class="px-2 py-0.5 rounded-full text-[10px] font-bold border ${i === mw.step ? 'bg-emerald-500 text-slate-950 border-emerald-500' : i < mw.step ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-slate-950 text-slate-500 border-slate-800'}">${esc(mwLabel(s))}${(MW_SLOTS[mw.sport].some(x => x[0] === s) || s === 'BN' || s === 'IR') ? ` ${mwListFor(s).length}/${mw.slots[s]}` : ''}</button>`).join('')}</div>
+                <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-700 space-y-2">${html}</div>
+                <div class="flex gap-2">
+                    ${mw.step > 0 ? `<button onclick="mwGo(${mw.step - 1})" class="flex-1 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">Back</button>` : `<button onclick="mwCancel()" class="flex-1 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">Cancel</button>`}
+                    <button onclick="${last ? 'mwFinish()' : `mwGo(${mw.step + 1})`}" class="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold">${last ? 'Save my team' : 'Next'}</button>
+                </div>`;
+            const s = document.getElementById('mw-search');
+            if (s && mw.focus) { s.focus(); mw.focus = false; }
+        }
+        function mwSetScore(key, v) { mw.scoring[key] = v; renderManual(); }
+        function mwSetNbaPreset(v) { mw.scoring.preset = v; if (MW_NBA_PRESETS[v]) mw.scoring.custom = { ...MW_NBA_PRESETS[v].s }; renderManual(); }
+        function mwSetNbaCat(c, v) { mw.scoring.custom[c] = Number(v) || 0; mw.scoring.preset = 'custom'; renderManual(); }
+        function mwSlot(k, d) {
+            const max = k === 'BN' ? 15 : k === 'IR' ? 5 : 6;
+            mw.slots[k] = Math.max(0, Math.min(max, (mw.slots[k] || 0) + d));
+            const list = mwListFor(k);
+            if (list.length > mw.slots[k]) list.length = mw.slots[k];
+            renderManual();
+        }
+        function mwGo(i) { mw.step = i; mw.focus = true; renderManual(); window.scrollTo({ top: document.getElementById('espn-panel').offsetTop - 70, behavior: 'smooth' }); }
+        function mwRemove(k, id) { const l = mwListFor(k); const i = l.findIndex(x => String(x) === id); if (i >= 0) l.splice(i, 1); mw.focus = true; renderManual(); }
+        function mwAdd(k, id) { const l = mwListFor(k); if (!l.includes(id) && l.length < (mw.slots[k] || 0)) l.push(id); mw.focus = true; renderManual(); }
+        function mwSearch() {
+            const q = normName(document.getElementById('mw-search').value);
+            const out = document.getElementById('mw-results');
+            const k = mwSteps()[mw.step];
+            if (q.length < 2) { out.innerHTML = ''; return; }
+            const taken = new Set(mwAllPicked().map(String));
+            const hits = (playerCache[mw.sport] || []).filter(p => !taken.has(String(p.id)) && mwFits(p, k) && normName(p.name).includes(q)).slice(0, 8);
+            out.innerHTML = hits.length ? hits.map(p => `<button onclick="mwAdd('${k}', '${esc(String(p.id))}')" class="w-full flex items-center gap-2 p-2 rounded-lg bg-slate-950/60 border border-slate-800 hover:border-emerald-500 text-left text-[12px]">
+                    <i class="fa-solid fa-plus text-emerald-400 text-[10px]"></i><span class="font-bold text-slate-100">${esc(p.name)}</span><span class="text-slate-500">${esc(p.team)} ${esc((p.fpos || [p.pos]).join('/'))}</span>${p.injury ? `<span class="text-rose-300 text-[10px]">${esc(p.injury)}</span>` : ''}</button>`).join('')
+                : `<div class="text-[11px] text-slate-500">No ${k === 'BN' || k === 'IR' ? '' : esc(k) + ' '}players match.</div>`;
+        }
+        function mwCancel() {
+            mw = null; renderManual();
+            if (espn.leagueId) { document.getElementById('espn-cards').classList.remove('hidden'); renderEspnLeagues(); }
+            else { espnShowConnect(); espnMsg('Enter your ESPN league ID to check your lineup, free agents and injuries.'); }
+        }
+        function mwFinish() {
+            const sport = mw.sport;
+            const { step, focus, ...save } = mw;
+            lsSet(manualKey(sport), JSON.stringify(save));
+            const list = espnSaved().filter(l => !(l.sport === sport && l.id === 'manual'));
+            list.push({ sport, id: 'manual', name: 'Private league (entered by you)', teamName: save.teamName || 'My team', manual: true });
+            espnSave(list);
+            mw = null; renderManual();
+            espnOpenManual(sport);
+        }
+
+        // Build the roster from what you entered, with Sleeper projections and scores
+        async function espnOpenManual(sport) {
+            const saved = manualSaved(sport);
+            if (!saved) { espnStartManual(sport); return true; }
+            mw = null; renderManual();
+            const bench = ESPN_BENCH[sport], irSlot = ESPN_IR[sport];
+            const counts = {};
+            MW_SLOTS[sport].forEach(([k, id]) => { if (saved.slots[k]) counts[id] = saved.slots[k]; });
+            counts[bench] = saved.slots.BN || 0; counts[irSlot] = saved.slots.IR || 0;
+            Object.assign(espn, {
+                sport, leagueId: 'manual', teamId: 'manual', manual: true, season: null, host: espn.host,
+                data: { settings: { name: saved.teamName || 'My team', rosterSettings: { lineupSlotCounts: counts } }, status: {}, teams: [] }
+            });
+            setEspnSport(sport);
+            lsSet('rosteriq_espn_last', espnKey(sport, 'manual'));
+            renderEspnLeagues();
+            document.getElementById('espn-cards').classList.remove('hidden');
+            document.getElementById('espn-teams').classList.add('hidden');
+            document.getElementById('espn-connect').classList.add('hidden');
+            document.getElementById('espn-fa-wrap').classList.add('hidden');
+            document.getElementById('espn-edit-lineup').classList.remove('hidden');
+            espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Getting Sleeper projections for your players...');
+            try {
+                await loadRosterDirectory(sport);
+                const scoring = manualScoring(sport, saved.scoring);
+                const entries = [];
+                MW_SLOTS[sport].forEach(([k, id]) => (saved.picks[k] || []).forEach(pid => entries.push([pid, id])));
+                saved.bench.forEach(pid => entries.push([pid, bench]));
+                saved.ir.forEach(pid => entries.push([pid, irSlot]));
+                const nflElig = { QB: [0, 7], RB: [2, 23, 7], WR: [4, 23, 7], TE: [6, 23, 7], K: [17], 'D/ST': [16] };
+                const nbaElig = p => Object.entries({ PG: 0, SG: 1, SF: 2, PF: 3, C: 4, G: 5, F: 6, UTIL: 11 }).filter(([s]) => nbaFits(p, s)).map(([, id]) => id);
+                let roster = [];
+                if (sport === 'nfl') {
+                    const st = await getSleeperState('nfl');
+                    const season = Number(st.season) || currentSeason('nfl'), week = Number(st.week) || 1;
+                    espn.season = season; espn.period = week;
+                    const [{ map: kick }, proj] = await Promise.all([getKickoffs(season, week), getSleeperProjections(season, week).catch(() => ({}))]);
+                    roster = await Promise.all(entries.map(async ([pid, slot]) => {
+                        const p = playerCache.nfl.find(x => String(x.id) === String(pid));
+                        if (!p) return null;
+                        const sid = p.pos === 'D/ST' ? p.team : String(p.sleeperId);
+                        const k = kick[p.team] || kick[ABBR_ALIASES[p.team]];
+                        const pj = proj[sid];
+                        const played = await playedGames('nfl', sid, season);
+                        const act = played[String(week)];
+                        const info = rawPlayers.nfl[sid] || {};
+                        const inj = String(pj?.player?.injury_status || info.injury || p.injury || '');
+                        const started = k && (k.status === 'in_game' || k.status === 'complete' || (k.timeKnown && k.time <= new Date()));
+                        return {
+                            pid: sid, name: p.name, pos: p.pos, team: p.team, slot, eligible: [...(nflElig[p.pos] || []), bench, irSlot],
+                            inj: espnInjCode(inj), injText: inj, locked: !!started,
+                            proj: pj?.stats ? leaguePoints(pj.stats, scoring) : 0, actual: act ? leaguePoints(act, scoring) : null, rosAvg: 0,
+                            game: k ? { date: (k.time || new Date()).getTime(), home: k.home, opp: k.opp, started: !!started, final: k.status === 'complete' } : null
+                        };
+                    }));
+                } else {
+                    const season = await sleeperSeasonFor('nba');
+                    espn.season = season;
+                    const today = ymdLocal(new Date());
+                    const sched = await getNbaSchedule(season).catch(() => []);
+                    const todays = sched.filter(g => g.date === today);
+                    const week = Number(todays[0]?.week || sched.filter(g => g.date >= today)[0]?.week || 1);
+                    espn.period = week;
+                    const pw = await projWeek('nba', season, week);
+                    roster = await Promise.all(entries.map(async ([pid, slot]) => {
+                        const p = playerCache.nba.find(x => String(x.id) === String(pid));
+                        if (!p) return null;
+                        const sid = String(p.sleeperId);
+                        const g = todays.find(x => nbaPlays(p.team, x));
+                        const mine = pw.filter(e => String(e.player_id) === sid && e.stats);
+                        const pjToday = mine.find(e => e.date === today);
+                        const perGame = mine.length ? mine.reduce((a, e) => a + leaguePoints(e.stats, scoring), 0) / mine.length : 0;
+                        const played = await playedGames('nba', sid, season);
+                        const act = played[today];
+                        const info = rawPlayers.nba[sid] || {};
+                        const inj = String(pjToday?.player?.injury_status || info.injury || p.injury || '');
+                        const started = g && g.status && g.status !== 'pre_game';
+                        const home = g ? sameTeam(p.team, nbaTeam(g.home)) : false;
+                        return {
+                            pid: sid, name: p.name, pos: (p.fpos || [p.pos]).join('/'), team: p.team, slot, eligible: [...nbaElig(p), bench, irSlot],
+                            inj: espnInjCode(inj), injText: inj, locked: !!started,
+                            proj: pjToday?.stats ? leaguePoints(pjToday.stats, scoring) : perGame, actual: act ? leaguePoints(act, scoring) : null, rosAvg: perGame,
+                            game: g ? { date: new Date(`${today}T19:00:00`).getTime(), noTime: true, home, opp: home ? nbaTeam(g.away) : nbaTeam(g.home), started: !!started, final: g.status === 'complete' } : null
+                        };
+                    }));
+                }
+                espn.roster = roster.filter(Boolean);
+                espn.loadedAt = Date.now();
+                const badge = document.getElementById('espn-week-badge');
+                badge.textContent = sport === 'nfl' ? `Week ${espn.period}` : new Date().toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+                badge.classList.remove('hidden');
+                document.getElementById('espn-open').href = `https://fantasy.espn.com/${ESPN_SITE_PATH[sport]}/`;
+                espnMsg(`${esc(saved.teamName || 'My team')} · ${espn.roster.length} players you entered. Projections and scores are Sleeper's, in your league's scoring. When you change your lineup in ESPN, tap <strong>Edit my lineup</strong> so the advice matches.`);
+                document.getElementById('espn-fix').innerHTML = '';
+                espnFixLineup();
+                ['espn-team-wrap', 'espn-ir-wrap'].forEach(w => { const el = document.getElementById(w); if (el.open) el.dispatchEvent(new Event('toggle')); });
+                espnInjurySub();
+            } catch (e) {
+                espnMsg(`Couldn't load your players: ${esc(e.message)}. <button onclick="espnOpenManual('${sport}')" class="underline">Try again</button>`, true);
+            }
+            return true;
+        }
+        // Sleeper injury words -> ESPN's codes, so the ESPN cards read them the same way
+        function espnInjCode(s) {
+            s = String(s || '').toLowerCase();
+            if (!s) return '';
+            if (/^ir|injured reserve/.test(s)) return 'INJURY_RESERVE';
+            if (/^out|^o$/.test(s)) return 'OUT';
+            if (/doubt/.test(s)) return 'DOUBTFUL';
+            if (/^sus/.test(s)) return 'SUSPENSION';
+            if (/quest|gtd|day|probable/.test(s)) return 'QUESTIONABLE';
+            if (/pup|na|nfi/.test(s)) return 'OUT';
+            return '';
+        }
     </script>
 </body>
 </html>
