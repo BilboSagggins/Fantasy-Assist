@@ -2631,7 +2631,7 @@
                     .map(pid => {
                         const info = pInfo(pid);
                         const pl = league.players.find(x => x.pid === pid);
-                        return { pid, info, ppg: valueOf(pid), left: agg[pid]?.left || 0, locked: isLocked(pl), ir: irRule(info).ok };
+                        return { pid, info, ppg: valueOf(pid), left: agg[pid]?.left || 0, next: agg[pid]?.next || 0, locked: isLocked(pl), ir: irRule(info).ok };
                     })
                     .sort((x, y) => x.ppg - y.ppg);
 
@@ -2650,22 +2650,33 @@
 
                 const posTxt = info => esc((info.fpos && info.fpos.length ? info.fpos : [info.pos]).join('/'));
                 const gamesTxt = a => nba ? `${a.left} game${a.left === 1 ? '' : 's'} left this week${!isLockFormat() && a.ppg ? ` \u00b7 \u2248${(a.ppg * a.left).toFixed(0)} pts` : ''}` : (a.left ? 'plays this week' : 'no game this week');
-                const moveCard = m => `
-                    <div class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-[11px] space-y-1">
+                const moveCard = (m, i) => `
+                    <details class="group/mv p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-[11px]" ontoggle="if (this.open) explainPickup('s', ${i})">
+                      <summary class="list-none cursor-pointer select-none space-y-1">
                         <div class="flex items-center justify-between gap-2"><span class="font-bold text-emerald-200"><i class="fa-solid fa-plus mr-1"></i>Add ${esc(m.fa.info.name)}</span><span class="font-black text-emerald-300">+${m.gain.toFixed(1)}/game</span></div>
                         <div class="text-slate-300">${esc(m.fa.info.team)} ${posTxt(m.fa.info)} · <strong>${m.fa.ppg.toFixed(1)}</strong> proj/game · ${gamesTxt(m.fa)}${m.fa.trend ? ` · <span class="text-cyan-300">+${m.fa.trend} adds in 24h</span>` : ''}${m.fa.inj ? ` · <span class="text-rose-300">${esc(m.fa.inj)}</span>` : ''}</div>
                         <div class="text-rose-300"><i class="fa-solid fa-minus mr-1"></i>Drop ${esc(m.drop.info.name)} <span class="text-slate-400">${esc(m.drop.info.team || '')} · ${m.drop.ppg ? `${m.drop.ppg.toFixed(1)} proj/game` : 'no projection'} · ${gamesTxt(m.drop)}</span></div>
                         ${m.drop.ir ? `<div class="text-amber-300">${esc(m.drop.info.name)} is IR-eligible: move him to IR instead of dropping him, if you have a spot.</div>` : ''}
-                    </div>`;
+                        <div class="text-emerald-300/80 font-semibold"><i class="fa-solid fa-chevron-down mr-1 transition group-open/mv:rotate-180"></i><span class="group-open/mv:hidden">Tap for why</span><span class="hidden group-open/mv:inline">Hide details</span></div>
+                      </summary>
+                      <div id="fa-why-s-${i}"></div>
+                    </details>`;
+                // your weakest player who shares a position with him: who he'd be compared against
+                const shares = (x, y) => { const px = x.fpos?.length ? x.fpos : [x.pos], py = y.fpos?.length ? y.fpos : [y.pos]; return px.some(v => py.includes(v)); };
+                const worstAt = a => drops.find(m => shares(a.info, m.info)) || drops[0] || null;
                 const faRow = (a, i) => `
-                    <div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                    <details class="group/fr rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]" ontoggle="if (this.open) explainPickup('t', ${i})">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-1.5">
                         <span class="w-5 text-right text-slate-500 font-bold">${i + 1}</span>
                         <div class="flex-1 min-w-0">
                             <div class="font-bold text-slate-100 truncate">${esc(a.info.name)} <span class="font-normal text-slate-400">${esc(a.info.team)} ${posTxt(a.info)}</span></div>
                             <div class="text-slate-500">${gamesTxt(a)}${a.trend ? ` · <span class="text-cyan-300">+${a.trend} adds</span>` : ''}${a.inj ? ` · <span class="text-rose-300">${esc(a.inj)}</span>` : ''}</div>
                         </div>
                         <span class="shrink-0 font-black text-emerald-300">${a.ppg.toFixed(1)}</span>
-                    </div>`;
+                        <i class="fa-solid fa-chevron-down shrink-0 text-slate-500 text-[10px] transition group-open/fr:rotate-180"></i>
+                    </summary>
+                    <div id="fa-why-t-${i}" class="px-2 pb-2"></div>
+                    </details>`;
                 const mineRow = m => `
                     <div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
                         <div class="flex-1 min-w-0"><span class="font-bold text-slate-200">${esc(m.info.name)}</span> <span class="text-slate-500">${esc(m.info.team || '')} · ${gamesTxt(m)}${m.locked ? ' · locked' : ''}${m.info.injury ? ` · <span class="text-rose-300">${esc(m.info.injury)}</span>` : ''}</span></div>
@@ -2677,7 +2688,7 @@
                     <div class="text-[11px] text-slate-400">Compares Sleeper's per-game projections (this week and next, in your league's scoring). Suggests a pickup when a free agent projects at least ${margin} pts/game more than one of your players. Locked players are never suggested as drops.</div>
                     ${moves.length ? `<div class="text-[11px] font-bold text-emerald-300 pt-1">Suggested moves</div>${moves.map(moveCard).join('')}` : `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>None of the top free agents projects ${margin}+ pts/game better than your weakest players.</div>`}
                     <details class="group/fal">
-                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Top 50 free agents <span class="text-slate-500 font-normal">proj/game <i class="fa-solid fa-chevron-down ml-1 transition group-open/fal:rotate-180"></i></span></summary>
+                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Top 50 free agents <span class="font-normal text-slate-500">· tap one for details</span><span class="flex-1"></span><span class="text-slate-500 font-normal">proj/game <i class="fa-solid fa-chevron-down ml-1 transition group-open/fal:rotate-180"></i></span></summary>
                         <div class="mt-1.5 space-y-1">${fas.map(faRow).join('')}</div>
                     </details>
                     <details class="group/fam">
@@ -2686,8 +2697,147 @@
                     </details>
                     <div class="text-[11px] text-slate-500">Players picked up after their game starts may go to waivers (your league uses ${league.info.settings?.waiver_type === 2 ? `FAAB, $${league.info.settings?.waiver_budget || ''} budget` : 'waivers'}).</div>
                     <a href="https://sleeper.com/leagues/${encodeURIComponent(league.leagueId)}/players" target="_blank" rel="noopener" class="block text-center py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Sleeper players</a>`;
+                // what a tap compares: suggested moves as paired, any top-50 free agent vs. your weakest player at his position
+                league.faPicks = { sport, tok, s: moves, t: fas.map(a => { const d = worstAt(a); return d ? { fa: a, drop: d, gain: a.ppg - d.ppg } : null; }) };
             } catch (e) {
                 body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load free agents: ${esc(e.message)}</div>`;
+            }
+        }
+
+
+        // ---------- Free agent pickups: the reasons behind a suggestion ----------
+        function lastName(n) { const w = String(n || '').split(' ').filter(x => !/^(jr\.?|sr\.?|ii|iii|iv|v)$/i.test(x)); return w[w.length - 1] || n; }
+        function cachedPlayer(sport, pid) { return (playerCache[sport] || []).find(p => String(p.sleeperId) === String(pid)) || null; }
+
+        // Open the comparison tool with these players side by side
+        async function compareTwo(sport, pidA, pidB) {
+            await loadRosterDirectory(sport);
+            const a = cachedPlayer(sport, pidA), b = cachedPlayer(sport, pidB);
+            if (!a) return;
+            setTab(sport);
+            slots[2] = null;
+            selectPlayerForSlot(a.id, 0);
+            if (b) selectPlayerForSlot(b.id, 1); else slots[1] = null;
+            renderSelectionCards(); renderComparisonGrid();
+            document.getElementById('selection-cards').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Numbers from a player's game logs: recent scoring, role (minutes or touches), range
+        function pickupProfile(d, sport) {
+            const out = { n: 0, seasonN: 0 };
+            if (!d) return out;
+            const logs = d.gameLogs || [];
+            const all = d.allLogs || logs;
+            const seasonStart = sport === 'nba' ? `${currentSeason('nba') - 1}-10-01` : `${currentSeason('nfl')}-09-01`;
+            const cur = all.filter(g => !g.date || g.date >= seasonStart);
+            const avg = (arr, f) => arr.length ? arr.reduce((a, g) => a + f(g), 0) / arr.length : null;
+            out.n = logs.length;
+            out.seasonN = cur.length;
+            out.recent = avg(logs.slice(0, 3), g => g.pts);
+            out.l5 = avg(logs, g => g.pts);
+            out.season = avg(cur, g => g.pts);
+            const pts = logs.map(g => g.pts);
+            out.floor = pts.length ? Math.min(...pts) : null;
+            out.ceil = pts.length ? Math.max(...pts) : null;
+            if (sport === 'nba') {
+                out.minRecent = avg(logs.slice(0, 3), g => num(g.stats?.min));
+                out.minBefore = logs.length > 3 ? avg(logs.slice(3), g => num(g.stats?.min)) : null;
+                out.line = logs.length ? ['pts', 'reb', 'ast'].map(k => avg(logs, g => num(g.stats?.[k])).toFixed(1)).join(' / ') : null;
+            } else {
+                const s = f => avg(logs, g => num(f(g.stats || {})));
+                const pos = d.pos;
+                if (pos === 'RB') { out.role = s(x => (x.rushAtt || 0) + (x.targets || 0)); out.roleLabel = 'touches/game'; }
+                else if (pos === 'WR' || pos === 'TE') { out.role = s(x => x.targets); out.roleLabel = 'targets/game'; }
+                else if (pos === 'QB') { out.role = s(x => x.passAtt); out.roleLabel = 'pass att/game'; }
+                const recentRole = logs.slice(0, 2), earlierRole = logs.slice(2);
+                if (out.roleLabel && recentRole.length && earlierRole.length) {
+                    const pick = x => pos === 'RB' ? (x.rushAtt || 0) + (x.targets || 0) : pos === 'QB' ? (x.passAtt || 0) : (x.targets || 0);
+                    out.roleRecent = avg(recentRole, g => pick(g.stats || {}));
+                    out.roleBefore = avg(earlierRole, g => pick(g.stats || {}));
+                }
+            }
+            return out;
+        }
+
+        function pickupReasons(m, F, D, sport) {
+            const nba = sport === 'nba';
+            const fa = m.fa, dr = m.drop, faN = lastName(fa.info.name), drN = lastName(dr.info.name);
+            const pro = [], con = [];
+            const projTxt = `${fa.ppg.toFixed(1)} a game to ${drN}'s ${dr.ppg ? dr.ppg.toFixed(1) : '0'} (Sleeper, your scoring)`;
+            if (fa.ppg >= (dr.ppg || 0)) pro.push(`Projects ${projTxt}.`); else con.push(`Projects less: ${projTxt}.`);
+            if (nba) {
+                const gFa = fa.left + fa.next, gDr = dr.left + dr.next;
+                if (fa.left > dr.left) pro.push(`More chances this week: ${fa.left} games left to ${drN}'s ${dr.left}.`);
+                else if (fa.left < dr.left) con.push(`Fewer games this week: ${fa.left} left to ${drN}'s ${dr.left}.`);
+                if (gFa > gDr && fa.left <= dr.left) pro.push(`More games over the next two weeks: ${gFa} to ${gDr}.`);
+            } else {
+                if (fa.left && !dr.left) pro.push(`${drN} doesn't play this week; ${faN} does.`);
+                if (!fa.left) con.push(`${faN} doesn't play this week (bye): this is a pickup for next week.`);
+            }
+            if (F.recent != null && D.recent != null) {
+                const diff = F.recent - D.recent;
+                if (diff >= 3) pro.push(`Hotter lately: ${F.recent.toFixed(1)} a game over his last ${Math.min(3, F.n)} to ${drN}'s ${D.recent.toFixed(1)}.`);
+                else if (diff <= -3) con.push(`${drN} has been better lately: ${D.recent.toFixed(1)} a game over his last ${Math.min(3, D.n)} to ${F.recent.toFixed(1)}.`);
+            }
+            if (nba && F.minRecent != null && F.minBefore != null && F.minRecent - F.minBefore >= 4) pro.push(`Bigger role: ${F.minRecent.toFixed(0)} minutes a game lately, up from ${F.minBefore.toFixed(0)}.`);
+            if (nba && D.minRecent != null && D.minBefore != null && D.minBefore - D.minRecent >= 4) pro.push(`${drN}'s role is shrinking: ${D.minRecent.toFixed(0)} minutes lately, down from ${D.minBefore.toFixed(0)}.`);
+            if (nba && F.minRecent != null && D.minRecent != null && F.minRecent - D.minRecent >= 5) pro.push(`Plays more: ${F.minRecent.toFixed(0)} minutes a game to ${drN}'s ${D.minRecent.toFixed(0)}.`);
+            if (!nba && F.roleRecent != null && F.roleBefore != null && F.roleRecent - F.roleBefore >= 2) pro.push(`Growing role: ${F.roleRecent.toFixed(1)} ${F.roleLabel} his last 2 games, up from ${F.roleBefore.toFixed(1)}.`);
+            if (!nba && F.role != null && D.role != null && F.role - D.role >= 2) pro.push(`More work: ${F.role.toFixed(1)} ${F.roleLabel} to ${drN}'s ${D.role.toFixed(1)}.`);
+            if (F.floor != null && D.floor != null && F.n >= 3 && D.n >= 3 && F.floor - D.floor >= 4) pro.push(`Safer floor: his worst recent game was ${F.floor.toFixed(1)}, ${drN}'s was ${D.floor.toFixed(1)}.`);
+            if (dr.info.injury) pro.push(`${drN} is listed ${dr.info.injury}${dr.ir ? ' (IR-eligible, so stash him on IR if you have room)' : ''}.`);
+            if (fa.trend >= 50) pro.push(`${fa.trend.toLocaleString()} managers added him in the last 24 hours: he may not last on waivers.`);
+            if (fa.inj) con.push(`${faN} is listed ${fa.inj}.`);
+            if (F.seasonN && F.seasonN < 3) con.push(`Only ${F.seasonN} game${F.seasonN === 1 ? '' : 's'} this season, so recent numbers are a small sample.`);
+            if (F.l5 != null && fa.ppg - F.l5 >= 6) con.push(`His projection (${fa.ppg.toFixed(1)}) is well above what he's scored (${F.l5.toFixed(1)} over his last ${F.n}): Sleeper expects a bigger role.`);
+            if (!F.n) con.push(`No game logs for ${faN} yet: this rests on the projection alone.`);
+            return { pro, con };
+        }
+
+        async function explainPickup(kind, i) {
+            const fp = league.faPicks;
+            const box = document.getElementById(`fa-why-${kind}-${i}`);
+            if (!fp || !box || box.dataset.done) return;
+            const m = fp[kind][i], sport = fp.sport, tok = fp.tok;
+            if (!m) { box.innerHTML = `<div class="text-slate-400 pt-1">Nobody on your roster to compare him with.</div>`; return; }
+            box.dataset.done = '1';
+            box.innerHTML = `<div class="text-slate-400 pt-1"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Checking recent form, role and schedule...</div>`;
+            {
+                const fb = cachedPlayer(sport, m.fa.pid), db = cachedPlayer(sport, m.drop.pid);
+                const [F, D] = await Promise.all([fb, db].map(b => b ? fetchPlayerData(b).catch(() => null) : null));
+                if (tok !== league.loadSeq) return;
+                const pf = pickupProfile(F, sport), pd = pickupProfile(D, sport);
+                const { pro, con } = pickupReasons(m, pf, pd, sport);
+                const f1 = v => v == null ? '–' : v.toFixed(1);
+                const rows = [
+                    ['Proj/game', f1(m.fa.ppg), m.drop.ppg ? f1(m.drop.ppg) : '–'],
+                    sport === 'nba' ? ['Games left (this wk / next)', `${m.fa.left} / ${m.fa.next}`, `${m.drop.left} / ${m.drop.next}`] : ['Plays this week', m.fa.left ? 'Yes' : 'Bye', m.drop.left ? 'Yes' : 'Bye'],
+                    ['Last 3 games avg', f1(pf.recent), f1(pd.recent)],
+                    ['This season avg', pf.seasonN ? `${f1(pf.season)} (${pf.seasonN}g)` : '–', pd.seasonN ? `${f1(pd.season)} (${pd.seasonN}g)` : '–'],
+                    sport === 'nba' ? ['Minutes (last 3)', pf.minRecent != null ? pf.minRecent.toFixed(0) : '–', pd.minRecent != null ? pd.minRecent.toFixed(0) : '–']
+                        : [pf.roleLabel || pd.roleLabel || 'Role', f1(pf.role), f1(pd.role)],
+                    sport === 'nba' ? ['Pts / reb / ast', pf.line || '–', pd.line || '–'] : null,
+                    ['Range (last 5)', pf.n ? `${f1(pf.floor)}–${f1(pf.ceil)}` : '–', pd.n ? `${f1(pd.floor)}–${f1(pd.ceil)}` : '–'],
+                    ['Status', esc(m.fa.inj || 'Healthy'), esc(m.drop.info.injury || 'Healthy')]
+                ].filter(Boolean);
+                const margin = sport === 'nba' ? 2 : 1.5;
+                const verdict = kind === 's' ? '' : m.gain >= margin
+                    ? `<div class="pt-1 font-bold text-emerald-300"><i class="fa-solid fa-thumbs-up mr-1"></i>Upgrade over ${esc(m.drop.info.name)}, your weakest player at his position.</div>`
+                    : `<div class="pt-1 font-bold text-slate-300"><i class="fa-solid fa-scale-balanced mr-1"></i>Compared with ${esc(m.drop.info.name)}, your weakest player at his position: ${m.gain >= 0 ? `only +${m.gain.toFixed(1)}/game, not enough to suggest` : `${m.gain.toFixed(1)}/game, not an upgrade`}.</div>`;
+                box.innerHTML = `${verdict}
+                    <div class="mt-1 rounded-lg bg-slate-950/70 border border-slate-800 overflow-hidden">
+                        <div class="grid grid-cols-[1fr_auto_auto] text-[10px]">
+                            <div class="px-2 py-1 text-slate-500 font-bold uppercase">Why</div>
+                            <div class="px-2 py-1 text-emerald-300 font-bold text-right w-20 truncate">${esc(lastName(m.fa.info.name))}</div>
+                            <div class="px-2 py-1 text-rose-300 font-bold text-right w-20 truncate">${esc(lastName(m.drop.info.name))}</div>
+                            ${rows.map(([k, a, b]) => `<div class="px-2 py-1 border-t border-slate-800/80 text-slate-400">${k}</div><div class="px-2 py-1 border-t border-slate-800/80 text-right font-bold text-slate-100 w-20">${a}</div><div class="px-2 py-1 border-t border-slate-800/80 text-right text-slate-300 w-20">${b}</div>`).join('')}
+                        </div>
+                    </div>
+                    <div class="space-y-0.5 pt-1">
+                        ${pro.map(t => `<div class="text-emerald-200/90"><i class="fa-solid fa-check mr-1 text-emerald-400"></i>${esc(t)}</div>`).join('')}
+                        ${con.map(t => `<div class="text-amber-200/90"><i class="fa-solid fa-triangle-exclamation mr-1 text-amber-400"></i>${esc(t)}</div>`).join('')}
+                    </div>
+                    ${fb ? `<button onclick="compareTwo('${sport}', '${esc(m.fa.pid)}', '${esc(m.drop.pid)}')" class="mt-1.5 w-full py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-bold text-slate-200"><i class="fa-solid fa-code-compare mr-1 text-emerald-400"></i>Compare ${esc(lastName(m.fa.info.name))} vs ${esc(lastName(m.drop.info.name))} in detail</button>` : ''}`;
             }
         }
 
