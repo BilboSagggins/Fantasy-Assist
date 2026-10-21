@@ -232,7 +232,7 @@
                         <i class="fa-solid fa-user-plus text-emerald-300"></i>
                         <div class="flex-1 min-w-0">
                             <div class="text-sm font-bold text-slate-100">Free agent pickups</div>
-                            <div id="fa-sub" class="text-[11px] text-slate-400">Top 25 free agents vs. your roster</div>
+                            <div id="fa-sub" class="text-[11px] text-slate-400">Top 50 free agents vs. your roster</div>
                         </div>
                         <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/fa:rotate-180"></i>
                     </summary>
@@ -2255,7 +2255,7 @@
                     .filter(a => a.n && !rostered.has(a.pid) && raw[a.pid] && raw[a.pid].team)
                     .map(a => ({ ...a, info: raw[a.pid], ppg: a.sum / a.n, trend: trending[a.pid] || 0 }))
                     .sort((x, y) => y.ppg - x.ppg)
-                    .slice(0, 25);
+                    .slice(0, 50);
 
                 const reserve = new Set((league.roster.reserve || []).map(String));
                 const taxi = new Set((league.roster.taxi || []).map(String));
@@ -2309,7 +2309,7 @@
                     <div class="text-[11px] text-slate-400">Compares Sleeper's per-game projections (this week and next, in your league's scoring). Suggests a pickup when a free agent projects at least ${margin} pts/game more than one of your players. Locked players are never suggested as drops.</div>
                     ${moves.length ? `<div class="text-[11px] font-bold text-emerald-300 pt-1">Suggested moves</div>${moves.map(moveCard).join('')}` : `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>None of the top free agents projects ${margin}+ pts/game better than your weakest players.</div>`}
                     <details class="group/fal">
-                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Top 25 free agents <span class="text-slate-500 font-normal">proj/game <i class="fa-solid fa-chevron-down ml-1 transition group-open/fal:rotate-180"></i></span></summary>
+                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Top 50 free agents <span class="text-slate-500 font-normal">proj/game <i class="fa-solid fa-chevron-down ml-1 transition group-open/fal:rotate-180"></i></span></summary>
                         <div class="mt-1.5 space-y-1">${fas.map(faRow).join('')}</div>
                     </details>
                     <details class="group/fam">
@@ -3004,7 +3004,7 @@
             document.getElementById('myteam-body').innerHTML = '';
             document.getElementById('myteam-sub').textContent = 'Tap to see every starter\'s score';
             ['fa', 'ir'].forEach(k => { document.getElementById(`${k}-wrap`).open = false; document.getElementById(`${k}-body`).innerHTML = ''; });
-            document.getElementById('fa-sub').textContent = 'Top 25 free agents vs. your roster';
+            document.getElementById('fa-sub').textContent = 'Top 50 free agents vs. your roster';
             document.getElementById('ir-sub').textContent = 'Tap to check injuries and IR moves';
         }
 
