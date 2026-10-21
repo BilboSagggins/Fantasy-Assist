@@ -390,17 +390,6 @@
                     </summary>
                     <div id="espn-fa-body" class="px-3 pb-3 space-y-1.5"></div>
                 </details>
-                <details data-card id="espn-tx-wrap" class="group/etx rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadTransactions()">
-                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
-                        <i class="fa-solid fa-right-left text-cyan-300"></i>
-                        <div class="flex-1 min-w-0">
-                            <div class="text-sm font-bold text-slate-100">Transactions</div>
-                            <div class="text-[11px] text-slate-400">Your moves, waiver claims and other teams' drops</div>
-                        </div>
-                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/etx:rotate-180"></i>
-                    </summary>
-                    <div id="espn-tx-body" class="px-3 pb-3 space-y-1.5"></div>
-                </details>
                 <details data-card id="espn-ir-wrap" class="group/eir rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadInjuries()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-kit-medical text-rose-300"></i>
@@ -4418,7 +4407,7 @@
         const ESPN_INJ = { QUESTIONABLE: 'Questionable', DOUBTFUL: 'Doubtful', OUT: 'Out', INJURY_RESERVE: 'IR', SUSPENSION: 'Suspended', DAY_TO_DAY: 'Day-to-day', SEVEN_DAY_DL: 'Out', TEN_DAY_DL: 'Out', FIFTEEN_DAY_DL: 'Out' };
         const ESPN_CANT_PLAY = ['OUT', 'INJURY_RESERVE', 'SUSPENSION', 'SEVEN_DAY_DL', 'TEN_DAY_DL', 'FIFTEEN_DAY_DL'];
 
-        const espn = { sport: 'nfl', leagueId: null, teamId: null, season: null, host: null, data: null, period: null, roster: [], txDay: 0, loadedAt: 0 };
+        const espn = { sport: 'nfl', leagueId: null, teamId: null, season: null, host: null, data: null, period: null, roster: [], loadedAt: 0 };
         const espnProCache = {};
 
         function espnSaved() { try { return JSON.parse(lsGet('rosteriq_espn_leagues') || '[]'); } catch (e) { return []; } }
@@ -4713,7 +4702,7 @@
                 espnMsg(`${esc(t.name || 'Your team')} · ${t.record || ''} · ${espn.roster.length} players. Projections are ESPN's, in your league's scoring.`);
                 document.getElementById('espn-fix').innerHTML = '';
                 espnFixLineup();
-                ['espn-team-wrap', 'espn-fa-wrap', 'espn-tx-wrap', 'espn-ir-wrap'].forEach(w => {
+                ['espn-team-wrap', 'espn-fa-wrap', 'espn-ir-wrap'].forEach(w => {
                     const el = document.getElementById(w);
                     if (el.open) el.dispatchEvent(new Event('toggle'));
                 });
@@ -4980,78 +4969,6 @@
                     </div>`).join('') : `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>Nobody on your roster has an injury tag.</div>`}`;
         }
 
-        // ---- Transactions: one day at a time ----
-        function espnSetTxDay(n) { espn.txDay = n; espnLoadTransactions(); }
-        async function espnLoadTransactions() {
-            const body = document.getElementById('espn-tx-body');
-            if (!espn.teamId) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
-            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading league transactions...</div>`;
-            const sport = espn.sport;
-            try {
-                // Without a period ESPN returns the current one. Basketball periods are days, so also ask for yesterday.
-                const urls = [`${espnBase()}?view=mTransactions2`];
-                if (sport === 'nba' && espn.period > 1) urls.push(`${espnBase()}?scoringPeriodId=${espn.period - 1}&view=mTransactions2`);
-                const results = await Promise.all(urls.map(u => espnFetch(u).catch(() => ({}))));
-                const seen = new Set();
-                const txs = [];
-                results.forEach(r => (r.transactions || []).forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); txs.push(t); } }));
-                const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - espn.txDay);
-                const end = new Date(start); end.setDate(end.getDate() + 1);
-                const when = t => t.processDate || t.proposedDate || 0;
-                const onDay = t => when(t) >= start.getTime() && when(t) < end.getTime();
-                // a plain drop comes through as a ROSTER move; lineup changes have only LINEUP items
-                const real = t => t.type !== 'DRAFT' && (t.items || []).some(i => i.type === 'ADD' || i.type === 'DROP');
-                const mine = txs.filter(t => t.teamId === espn.teamId && onDay(t) && real(t) && (t.status === 'EXECUTED' || t.type === 'WAIVER'))
-                    .sort((a, b) => when(b) - when(a));
-                const drops = [];
-                txs.filter(t => t.status === 'EXECUTED' && onDay(t) && real(t) && t.teamId !== espn.teamId).forEach(t =>
-                    (t.items || []).forEach(it => { if (it.type === 'DROP') drops.push({ pid: it.playerId, teamId: t.teamId, at: when(t) }); }));
-                // look up names, and whether the dropped players are still free
-                const ids = [...new Set([...mine.flatMap(t => (t.items || []).map(i => i.playerId)), ...drops.map(x => x.pid)])];
-                const info = {};
-                if (ids.length) {
-                    const [d, pro] = await Promise.all([
-                        espnFetch(`${espnBase()}?scoringPeriodId=${espn.period}&view=kona_player_info`, { players: { filterIds: { value: ids }, limit: ids.length } }),
-                        espnProTeams(sport, espn.season)
-                    ]);
-                    (d.players || []).forEach(x => {
-                        if (!x.player) return;
-                        const p = espnPlayer(x.player);
-                        p.team = espnTeamAbbr(p, pro);
-                        p.onTeamId = x.onTeamId;
-                        info[x.id ?? x.player.id] = p;
-                    });
-                }
-                const teams = espnTeams();
-                const tName = id => teams.find(t => t.id === id)?.name || 'another team';
-                const who = id => { const p = info[id]; return p ? `<strong class="text-slate-100">${esc(p.name)}</strong> <span class="text-slate-500">${esc(p.team)} ${esc(p.pos)}</span>` : `Player ${id}`; };
-                const statusTxt = t => t.status === 'EXECUTED' ? '<span class="text-emerald-300">Went through</span>'
-                    : t.status === 'PENDING' ? '<span class="text-cyan-300">Pending</span>'
-                    : t.status === 'CANCELED' ? '<span class="text-slate-400">Canceled</span>'
-                    : '<span class="text-rose-300">Didn\'t go through</span>';
-                const typeTxt = t => t.type === 'WAIVER' ? 'Waiver claim' : t.type === 'FREEAGENT' ? 'Free agent' : t.type.startsWith('TRADE') ? 'Trade' : (t.items || []).every(i => i.type === 'DROP') ? 'Drop' : 'Roster move';
-                const time = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                const mineHtml = mine.map(t => `<div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px] space-y-0.5">
-                        <div class="flex items-center justify-between gap-2"><span class="text-slate-400">${typeTxt(t)}${t.bidAmount ? ` · $${t.bidAmount}` : ''} · ${time(when(t))}</span>${statusTxt(t)}</div>
-                        ${(t.items || []).filter(i => i.type === 'ADD' || i.type === 'DROP').map(i => `<div>${i.type === 'ADD' ? '<i class="fa-solid fa-plus text-emerald-300 mr-1"></i>Add' : '<i class="fa-solid fa-minus text-rose-300 mr-1"></i>Drop'} ${who(i.playerId)}</div>`).join('')}
-                    </div>`).join('');
-                const avail = drops.filter(x => !info[x.pid] || !info[x.pid].onTeamId);
-                const availHtml = avail.map(x => `<div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
-                        <div class="flex-1 min-w-0 truncate">${who(x.pid)}</div>
-                        <span class="shrink-0 text-slate-500">by ${esc(tName(x.teamId))} · ${time(x.at)}</span>
-                    </div>`).join('');
-                const dayBtn = (n, label) => `<button onclick="espnSetTxDay(${n})" class="px-2.5 py-1 rounded-md font-bold ${espn.txDay === n ? 'bg-emerald-500 text-slate-950' : 'text-slate-400'}">${label}</button>`;
-                body.innerHTML = `
-                    <div class="flex justify-end"><div class="flex p-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px]">${dayBtn(0, 'Today')}${dayBtn(1, 'Yesterday')}</div></div>
-                    <div class="text-[11px] font-bold text-slate-300">Your moves</div>
-                    ${mineHtml || `<div class="text-[11px] text-slate-500">No moves or waiver claims ${espn.txDay ? 'yesterday' : 'today'}.</div>`}
-                    <div class="text-[11px] font-bold text-slate-300 pt-1">Newly available (dropped by other teams)</div>
-                    ${availHtml || `<div class="text-[11px] text-slate-500">No drops by other teams ${espn.txDay ? 'yesterday' : 'today'}.</div>`}
-                    <div class="text-[11px] text-slate-500">${sport === 'nfl' ? `Shows week ${espn.period}'s transactions.` : 'Shows the last two days of transactions.'} ESPN keeps waiver claims private until they process, so a claim shows up here once waivers run.</div>`;
-            } catch (e) {
-                body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load transactions: ${esc(e.message)}</div>`;
-            }
-        }
     </script>
 </body>
 </html>
