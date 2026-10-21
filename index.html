@@ -210,6 +210,13 @@
             <div id="league-select-wrap" class="hidden">
                 <select id="league-select" onchange="loadLeague(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-xs text-slate-200 focus:outline-none focus:border-emerald-500"></select>
             </div>
+            <div id="format-wrap" class="hidden flex items-center justify-between gap-2 text-[11px]">
+                <span class="text-slate-400">League format</span>
+                <div class="flex p-0.5 rounded-lg bg-slate-950 border border-slate-800">
+                    <button id="format-lock" onclick="setLeagueFormat('lock')" class="px-2.5 py-1 rounded-md font-bold">Lock-In</button>
+                    <button id="format-standard" onclick="setLeagueFormat('standard')" class="px-2.5 py-1 rounded-md font-bold">Standard</button>
+                </div>
+            </div>
             <div id="league-msg" class="text-xs text-slate-400">Connect your Sleeper account to get a lock-or-swap plan for every lineup slot this week.</div>
             <div id="lineup-fix-wrap" class="hidden space-y-2">
                 <label class="flex items-center justify-end gap-2 text-[11px] text-slate-400 select-none cursor-pointer">
@@ -1875,6 +1882,7 @@
                 } else p.decision = null;
 
                 p.value = remaining.length ? (last ? Math.max(last.actual, p.remPlan.value) : p.remPlan.value) : (last ? last.actual : 0);
+                if (!isLockFormat()) { p.value = remaining.reduce((a, g) => a + g.mu, 0); p.decision = null; }
                 p.gamesLeft = remaining.length;
                 if (!p.unavailable) {
                     if (!p.games.length) p.unavailable = 'No games this week';
@@ -1951,6 +1959,7 @@
             badge.classList.remove('hidden');
             document.getElementById('lineup-fix-wrap').classList.remove('hidden');
             document.getElementById('league-plan-wrap').classList.remove('hidden');
+            document.getElementById('league-plan-wrap').classList.toggle('tab-off', !isLockFormat());
             const { lineup, bench } = league.plan;
             if (!lineup.length) { el.innerHTML = `<div class="text-xs text-slate-400">No lineup slots found for this league.</div>`; return; }
             const total = lineup.reduce((a, sl) => a + (sl.p ? sl.p.value : 0), 0);
@@ -2327,7 +2336,7 @@
                 });
 
                 const posTxt = info => esc((info.fpos && info.fpos.length ? info.fpos : [info.pos]).join('/'));
-                const gamesTxt = a => nba ? `${a.left} game${a.left === 1 ? '' : 's'} left this week` : (a.left ? 'plays this week' : 'no game this week');
+                const gamesTxt = a => nba ? `${a.left} game${a.left === 1 ? '' : 's'} left this week${!isLockFormat() && a.ppg ? ` \u00b7 \u2248${(a.ppg * a.left).toFixed(0)} pts` : ''}` : (a.left ? 'plays this week' : 'no game this week');
                 const moveCard = m => `
                     <div class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-[11px] space-y-1">
                         <div class="flex items-center justify-between gap-2"><span class="font-bold text-emerald-200"><i class="fa-solid fa-plus mr-1"></i>Add ${esc(m.fa.info.name)}</span><span class="font-black text-emerald-300">+${m.gain.toFixed(1)}/game</span></div>
@@ -2569,7 +2578,9 @@
                 // Check against Sleeper: its counted score is his latest game unless he's locked
                 let check = null;
                 const sp = counted[pid];
-                if (final && sp != null) {
+                const plw = league.players.find(x => x.pid === pid);
+                const onlyGame = plw && (plw.games || []).filter(x => x.done && !x.dnp).length === 1;
+                if (final && sp != null && (isLockFormat() || onlyGame)) {
                     const pl = league.players.find(x => x.pid === pid);
                     const later = pl && (pl.games || []).some(x => x.done && x.date > D);
                     if (Math.abs(Number(sp) - pts) < 0.01) check = { ok: true, sleeper: Number(sp) };
@@ -2694,8 +2705,26 @@
         function loadLockOverrides() {
             try { league.lockOverrides = JSON.parse(lsGet(lockKey()) || '{}') || {}; } catch (e) { league.lockOverrides = {}; }
         }
+        // League format: Lock-In (one locked game per player) or Standard (every game counts)
+        function isLockFormat() { return (league.format || 'lock') === 'lock'; }
+        function paintFormat() {
+            const on = 'bg-emerald-500 text-slate-950', off = 'text-slate-400';
+            document.getElementById('format-lock').className = `px-2.5 py-1 rounded-md font-bold ${isLockFormat() ? on : off}`;
+            document.getElementById('format-standard').className = `px-2.5 py-1 rounded-md font-bold ${isLockFormat() ? off : on}`;
+            document.getElementById('format-wrap').classList.toggle('hidden', !league.leagueId);
+            document.getElementById('league-plan-wrap').classList.toggle('tab-off', !isLockFormat());
+        }
+        function setLeagueFormat(f) {
+            if (!league.leagueId || league.format === f) return;
+            league.format = f;
+            lsSet(`rosteriq_format_${league.leagueId}`, f);
+            paintFormat();
+            refreshLeague().then(() => fixLineup());
+            ['myteam', 'fa'].forEach(k => { if (document.getElementById(`${k}-wrap`).open) (k === 'myteam' ? loadMyTeam : loadFreeAgents)(); });
+        }
+
         function isLocked(p) {
-            if (!p || league.sport !== 'nba') return false;
+            if (!p || league.sport !== 'nba' || !isLockFormat()) return false;
             const o = league.lockOverrides?.[p.pid];
             return o != null ? o : p.lockInfo?.status === 'locked';
         }
@@ -2754,7 +2783,7 @@
                     if (!p.games || !p.games.length) return 'no games this week';
                     if (p.gamesLeft === 0) {
                         const last = p.games.filter(g => g.done && !g.benched).pop();
-                        return last ? `no games left; scored ${last.actual.toFixed(1)} on ${fmtDate(`${last.date}T12:00:00`)}, keep him if you're locking that` : 'no games left this week';
+                        return last && isLockFormat() ? `no games left; scored ${last.actual.toFixed(1)} on ${fmtDate(`${last.date}T12:00:00`)}, keep him if you're locking that` : 'no games left this week';
                     }
                     if (p.unavailable) return p.unavailable;
                     if (OUT_STATUS.test(p.injury || '')) return `listed ${p.injury}, may miss games`;
@@ -2785,7 +2814,7 @@
                         options = bench.filter(p => fits(p, slot))
                             .map(p => { const w = windowGame(p); return w ? { p, score: w.mu, date: w.date, dayLabel: w.label } : null; })
                             .filter(Boolean).sort((a, b) => b.score - a.score);
-                        const keep = !!(out && out.gamesLeft === 0 && out.games.some(g => g.done && !g.benched));
+                        const keep = isLockFormat() && !!(out && out.gamesLeft === 0 && out.games.some(g => g.done && !g.benched));
                         const outW = out && windowGame(out);
                         swapByDefault = options.length && !keep && (!outW || options[0].score > outW.mu);
                     } else {
@@ -2954,7 +2983,7 @@
             const nSel = groups.filter(g => g.selected >= 0).length;
             // Starters who've played this week can be locked; show them as tappable chips
             const starterIds = new Set((league.roster.starters || []).map(String));
-            const lockable = nba ? league.players.filter(p => starterIds.has(p.pid) && (p.games || []).some(g => g.done && !g.dnp)) : [];
+            const lockable = nba && isLockFormat() ? league.players.filter(p => starterIds.has(p.pid) && (p.games || []).some(g => g.done && !g.dnp)) : [];
             const nLocked = lockable.filter(isLocked).length;
             const lockChip = p => {
                 const on = isLocked(p);
@@ -3206,6 +3235,7 @@
             document.getElementById('lineup-fix-wrap').classList.add('hidden');
             document.getElementById('league-plan-wrap').classList.add('hidden');
             document.getElementById('league-week-badge').classList.add('hidden');
+            document.getElementById('format-wrap').classList.add('hidden');
             document.getElementById('myteam-wrap').open = false;
             document.getElementById('myteam-body').innerHTML = '';
             document.getElementById('myteam-sub').textContent = 'Tap to see every starter\'s score';
@@ -3250,6 +3280,8 @@
                 if (!mine) throw new Error('your team was not found in this league');
                 league.info = info;
                 league.roster = mine;
+                league.format = lsGet(`rosteriq_format_${leagueId}`) || 'lock';
+                paintFormat();
                 if (meta.sport === 'nba') {
                     nbaLeagueScoring = info.scoring_settings || null;
                     if (nbaLeagueScoring) scoringRules.nba = 'league';
@@ -3449,6 +3481,7 @@
             badge.classList.remove('hidden');
             document.getElementById('lineup-fix-wrap').classList.remove('hidden');
             document.getElementById('league-plan-wrap').classList.remove('hidden');
+            document.getElementById('league-plan-wrap').classList.toggle('tab-off', !isLockFormat());
             const plan = league.plan;
             if (!plan || !plan.chains.length) { el.innerHTML = `<div class="text-xs text-slate-400">No lineup slots found for this league.</div>`; return; }
 
