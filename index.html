@@ -449,8 +449,18 @@
         ];
 
         // ---------- helpers ----------
+        // A player "played" if Sleeper says so, or, right after a game when Sleeper
+        // hasn't added its games-played marker yet, if he has any minutes or stats.
+        function playedGame(st) {
+            if (!st) return false;
+            if (st.gp !== undefined && st.gp !== null) return num(st.gp) > 0;
+            return ['sp', 'pts', 'reb', 'ast', 'stl', 'blk', 'fga', 'fta', 'to', 'off_snp', 'pass_att', 'rush_att', 'rec_tgt', 'rec', 'fga', 'xpa', 'st_snp', 'def_snp']
+                .some(k => num(st[k]) !== 0);
+        }
+
         async function getJSON(url) {
-            const res = await fetch(url);
+            // always check with the server so scores and stats are never stale
+            const res = await fetch(url, { cache: 'no-cache' });
             if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
             return res.json();
         }
@@ -1017,7 +1027,7 @@
                 const { w, lines } = r.value;
                 lines.forEach(l => {
                     const st = l.stats;
-                    if (!st || num(st.gp) <= 0) return;
+                    if (!playedGame(st)) return;
                     const meta = byPid[l.pid];
                     let pos = String(l.pos || meta?.pos || '').toUpperCase();
                     if (pos === 'PK') pos = 'K';
@@ -1314,7 +1324,7 @@
             const load = async (s) => {
                 const d = await getJSON(`${SLEEPER_API}/stats/nfl/player/${sid}?season_type=regular&season=${s}&grouping=week`);
                 const games = Object.values(d || {})
-                    .filter(g => g && g.stats && (num(g.stats.gp) > 0 || (player.pos === 'D/ST' && g.stats.pts_allow !== undefined)))
+                    .filter(g => g && g.stats && (playedGame(g.stats) || (player.pos === 'D/ST' && g.stats.pts_allow !== undefined)))
                     .sort((a, b) => Number(b.week) - Number(a.week));
                 let sched = [];
                 try { sched = await getSleeperSchedule(s); } catch (e) { /* home/away unknown */ }
@@ -1623,7 +1633,7 @@
                 const d = await getJSON(`${SLEEPER_API}/stats/nba/player/${player.sleeperId}?season_type=regular&season=${s}&grouping=week`);
                 const games = Object.values(d || {})
                     .flatMap(v => Array.isArray(v) ? v : (v ? [v] : []))
-                    .filter(g => g && g.stats && num(g.stats.gp) > 0)
+                    .filter(g => g && g.stats && playedGame(g.stats))
                     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
                 return games.slice(0, 10).map(g => {
                     const stats = sleeperNbaStats(g.stats);
@@ -1786,11 +1796,13 @@
                 const completed = p.games.filter(g => g.done && !g.benched); // bench games can't be locked
                 p.remPlan = chainPlan(remaining);
                 const last = completed[completed.length - 1];
-                if (last && remaining.length) {
+                if (last && last.dnp && !last.played) {
+                    p.decision = { kind: 'final', text: `No stats from Sleeper yet for his ${fmtDate(`${last.date}T12:00:00`)} game. Tap Refresh in a few minutes before deciding to lock.` };
+                } else if (last && remaining.length) {
                     const v = p.remPlan.value;
                     p.decision = last.actual >= v
                         ? { kind: 'lock', text: `LOCK his ${fmtDate(`${last.date}T12:00:00`)} game: ${last.actual.toFixed(1)} pts beats the ${v.toFixed(1)} expected from his remaining ${remaining.length} game${remaining.length === 1 ? '' : 's'}.` }
-                        : { kind: 'swap', text: `WAIT: ${last.dnp ? 'no stats for his last game' : `${last.actual.toFixed(1)} pts`} is below the ${v.toFixed(1)} expected from his remaining ${remaining.length} game${remaining.length === 1 ? '' : 's'}. Don't lock yet.` };
+                        : { kind: 'swap', text: `WAIT: ${last.actual.toFixed(1)} pts is below the ${v.toFixed(1)} expected from his remaining ${remaining.length} game${remaining.length === 1 ? '' : 's'}. Don't lock yet.` };
                 } else if (last) {
                     p.decision = { kind: 'final', text: `Week's over for him — if nothing was locked, his last game (${last.actual.toFixed(1)} pts) counts.` };
                 } else p.decision = null;
@@ -1877,7 +1889,7 @@
                             const idx = st ? steps.indexOf(st) : -1;
                             const next = idx >= 0 ? steps[idx + 1]?.c : null;
                             let advice;
-                            if (g.done) advice = g.dnp ? `<span class="text-slate-400">Final · no stats (DNP?)</span>` : `<span class="text-white font-bold">Final · ${g.actual.toFixed(1)} pts</span>${g.benched ? ' <span class="text-slate-500">(on your bench, can\'t lock)</span>' : ''}`;
+                            if (g.done) advice = g.dnp ? `<span class="text-slate-400">Final · no stats from Sleeper yet</span>` : `<span class="text-white font-bold">Final · ${g.actual.toFixed(1)} pts</span>${g.benched ? ' <span class="text-slate-500">(on your bench, can\'t lock)</span>' : ''}`;
                             else if (st && st.threshold != null) {
                                 const pct = Math.round((1 - normCdf((st.threshold - g.mu) / g.sd)) * 100);
                                 advice = `Lock if <strong class="text-white">${st.threshold.toFixed(1)}+</strong> (~${pct}%), else wait for ${esc(day(next.date))}`;
@@ -2082,7 +2094,7 @@
                     const d = await getJSON(`${SLEEPER_API}/stats/nba/player/${pid}?season_type=regular&season=${season}&grouping=week`);
                     line = Object.values(d || {}).flatMap(v => Array.isArray(v) ? v : (v ? [v] : [])).find(x => x && x.date === D && x.stats);
                 } catch (e) { /* stats not up yet */ }
-                if (!line || num(line.stats.gp) <= 0 && !final) {
+                if (!line || (!playedGame(line.stats) && !final)) {
                     return { ...base, status: final ? 'Final · did not play' : (/progress|live|half|in_game/i.test(g.status || '') ? 'Live · no stats yet' : 'Not started'), pts: final ? 0 : null };
                 }
                 const st = sleeperNbaStats(line.stats);
