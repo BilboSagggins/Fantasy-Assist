@@ -273,6 +273,17 @@
                     </summary>
                     <div id="league-plan" class="px-3 pb-3 space-y-3"></div>
                 </details>
+                <details data-card id="lock-report-wrap" class="tab-off group/rep rounded-xl bg-slate-900/80 border border-slate-700">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-scale-balanced text-amber-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Lock report</div>
+                            <div id="lock-report-sub" class="text-[11px] text-slate-400">Your locks vs. the advice vs. the best possible</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/rep:rotate-180"></i>
+                    </summary>
+                    <div id="lock-report-body" class="px-3 pb-3 space-y-2"></div>
+                </details>
                 <details data-card id="fa-wrap" class="group/fa rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadFreeAgents()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-user-plus text-emerald-300"></i>
@@ -2066,6 +2077,7 @@
             });
             league.plan = { sport: 'nba', lineup: lineup.sort((a, b) => a.idx - b.idx), extra, bench: league.players.filter(p => !used.has(p.pid) && !extra.some(e => e.p === p)) };
             league.updated = new Date();
+            saveRecs();
             renderNbaPlan();
             setLeagueMsg(`${league.info.name} · ${nbaLeagueScoring ? 'your league’s exact scoring' : 'points scoring'} · updated ${league.updated.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
         }
@@ -2171,8 +2183,8 @@
             el.innerHTML = `
                 <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-100 space-y-1">
                     <div class="font-bold text-emerald-300"><i class="fa-solid fa-list-check mr-1"></i>Start these this week</div>
-                    <div>${lineup.filter(sl => sl.p).map(sl => `<span class="inline-block mr-2">${esc(sl.slot)}: <strong>${esc(sl.p.name)}</strong> <span class="text-emerald-300/70">(${sl.p.gamesLeft} left)</span></span>`).join('')}</div>
-                    <div class="text-emerald-200/80">Ranked by expected locked score, which counts games left as well as projection. Expected total: <strong>${total.toFixed(1)} pts</strong></div>
+                    <div>${lineup.filter(sl => sl.p).map(sl => `<span class="inline-block mr-2">${esc(sl.slot)}: <strong>${esc(sl.p.name)}</strong> ${isLocked(sl.p) ? `<span class="text-emerald-300 font-bold"><i class="fa-solid fa-lock text-[10px] mx-0.5"></i>${sl.p.lockedPts.toFixed(1)} pts</span>` : `<span class="text-emerald-300/70">(${sl.p.gamesLeft} left)</span>`}</span>`).join('')}</div>
+                    <div class="text-emerald-200/80">Ranked by expected locked score, which counts games left as well as projection. Locked players count their locked score. Expected total: <strong>${total.toFixed(1)} pts</strong></div>
                     <div class="text-emerald-200/70">${esc(WEIGHT_NOTE)}</div>
                 </div>
                 ${lineup.map(playerCard).join('')}
@@ -2194,6 +2206,189 @@
                 <button onclick="refreshLeague()" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition">
                     <i class="fa-solid fa-rotate mr-1 text-emerald-400"></i>Refresh scores &amp; game status
                 </button>`;
+            try { renderLockReport(); } catch (e) { console.warn('Lock report failed:', e); }
+        }
+
+
+        // ---------- Lock report: your locks vs. the model's advice vs. the best possible ----------
+        // Advice is saved on this phone as it's shown, so the report can replay exactly what you were told.
+        function recKey(week = league.week) { return `rosteriq_recs_${league.leagueId}_${week}`; }
+        function reportKey(week) { return `rosteriq_report_${league.leagueId}_${week}`; }
+        function readJSON(k) { try { return JSON.parse(lsGet(k) || 'null'); } catch (e) { return null; } }
+        const LIVE_RE = /progress|in_game|live|half/i;
+
+        function saveRecs() {
+            const recs = readJSON(recKey()) || {};
+            (league.players || []).forEach(p => {
+                if (!p.games || !p.games.length) return;
+                const r = recs[p.pid] = recs[p.pid] || {};
+                const steps = p.remPlan?.steps || [];
+                p.games.forEach(g => {
+                    const e = r[g.date] = r[g.date] || {};
+                    if (!g.done && !LIVE_RE.test(g.status || '')) {
+                        // before tip-off: the projection and the lock bar you were shown
+                        const st = steps.find(s => s.c === g);
+                        e.mu = g.mu;
+                        e.pre = st && st.threshold != null ? Number(st.threshold.toFixed(1)) : null;
+                    }
+                    if (g.done && p.lockable === g && !isLocked(p) && p.decision && (p.decision.kind === 'lock' || p.decision.kind === 'swap')) {
+                        // after the game: the bar it had to clear, lock or wait
+                        e.bar = Number((p.extraBar != null ? p.extraBar : p.remPlan.value).toFixed(1));
+                        e.say = p.decision.kind;
+                    }
+                });
+            });
+            lsSet(recKey(), JSON.stringify(recs));
+            return recs;
+        }
+
+        // Follow the model's advice game by game: lock the first game that clears its bar
+        function modelPick(p, r) {
+            const games = p.games || [];
+            for (let i = 0; i < games.length; i++) {
+                const g = games[i];
+                if (!g.done) return { pending: true };
+                const later = games.slice(i + 1);
+                if (!later.length) return { game: g, pts: g.actual, last: true };
+                if (g.dnp) continue;
+                const e = r?.[g.date] || {};
+                let bar = e.bar ?? e.pre, estimated = false;
+                if (bar == null) { bar = chainPlan(later.map(x => ({ ...x, mu: r?.[x.date]?.mu ?? x.mu }))).value; estimated = true; }
+                if (g.actual >= bar) return { game: g, pts: g.actual, bar, estimated };
+            }
+            return { pending: true };
+        }
+
+        function buildLockReport() {
+            if (league.sport !== 'nba' || !isLockFormat() || !league.players) return null;
+            const recs = readJSON(recKey()) || {};
+            const starters = (league.roster.starters || []).map(String);
+            const slots = (league.info.roster_positions || []).filter(x => !['BN', 'IR', 'TAXI'].includes(x));
+            const day = d => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' });
+            const rows = [];
+            starters.forEach((pid, i) => {
+                const p = league.players.find(x => x.pid === pid);
+                if (!p || !p.games || !p.games.length) return;
+                const r = recs[pid] || {};
+                const played = p.games.filter(g => g.done && !g.dnp);
+                const over = p.games.every(g => g.done);
+                const best = played.reduce((b, g) => (!b || g.actual > b.actual ? g : b), null);
+                let mine;
+                if (isLocked(p)) mine = { pts: p.lockedPts, date: p.lockedGame?.date, how: 'locked' };
+                else if (over) { const last = p.games[p.games.length - 1]; mine = { pts: p.counted ?? last.actual ?? 0, date: last.date, how: 'last game' }; }
+                else mine = { pts: null, how: 'open' };
+                const model = modelPick(p, r);
+                // projection misses, using the projection saved before each game
+                const misses = played.filter(g => r[g.date]?.mu != null).map(g => ({ date: g.date, mu: r[g.date].mu, actual: g.actual, err: g.actual - r[g.date].mu }));
+                // where the advice went wrong, in hindsight
+                const notes = [];
+                if (model.game && !model.pending) {
+                    const after = played.filter(g => g.date > model.game.date);
+                    const better = after.reduce((b, g) => (!b || g.actual > b.actual ? g : b), null);
+                    if (!model.last && better && better.actual > model.pts + 0.05)
+                        notes.push(`Advice locked ${day(model.game.date)} (${model.pts.toFixed(1)}), but ${day(better.date)} scored ${better.actual.toFixed(1)}: locked too early by ${(better.actual - model.pts).toFixed(1)}.`);
+                    const skipped = played.filter(g => g.date < model.game.date && g.actual > model.pts + 0.05);
+                    skipped.forEach(g => {
+                        const bar = r[g.date]?.bar ?? r[g.date]?.pre;
+                        notes.push(`Advice said wait after ${day(g.date)} (${g.actual.toFixed(1)}${bar != null ? `, bar ${bar.toFixed(1)}` : ''}) and ended with ${model.pts.toFixed(1)}: should have locked, cost ${(g.actual - model.pts).toFixed(1)}.`);
+                    });
+                }
+                const big = misses.filter(m => Math.abs(m.err) >= 8).sort((a, b) => Math.abs(b.err) - Math.abs(a.err))[0];
+                if (big) notes.push(`Biggest projection miss: ${day(big.date)} projected ${big.mu.toFixed(1)}, scored ${big.actual.toFixed(1)} (${big.err > 0 ? '+' : ''}${big.err.toFixed(1)}).`);
+                if (mine.how === 'locked' && model.game && !model.pending && mine.date !== model.game.date)
+                    notes.push(`You locked ${mine.date ? day(mine.date) : 'a different game'}; the advice would have locked ${day(model.game.date)}.`);
+                rows.push({
+                    pid, name: p.name, slot: slots[i] || 'UTIL', over,
+                    games: p.games.map(g => ({ date: g.date, opp: g.opp, home: g.home, done: g.done, actual: g.done ? g.actual : null, dnp: g.dnp, mu: r[g.date]?.mu ?? null })),
+                    mine, model: model.pending ? null : { pts: model.pts, date: model.game.date, estimated: !!model.estimated, last: !!model.last },
+                    best: best ? { pts: best.actual, date: best.date } : null, misses, notes
+                });
+            });
+            // best possible lineup: any of your players, each with his best game
+            const posSlots = (league.info.roster_positions || []).filter(s => NBA_SLOTS[s]);
+            const used = new Set();
+            let bestLineup = 0;
+            [...posSlots].sort((a, b) => NBA_SLOTS[a].length - NBA_SLOTS[b].length).forEach(s => {
+                const c = league.players.filter(p => !used.has(p.pid) && p.games && nbaFits(p, s))
+                    .map(p => ({ p, v: Math.max(0, ...p.games.filter(g => g.done && !g.dnp).map(g => g.actual)) }))
+                    .sort((a, b) => b.v - a.v)[0];
+                if (c) { used.add(c.p.pid); bestLineup += c.v; }
+            });
+            const allMiss = rows.flatMap(x => x.misses);
+            const rep = {
+                week: league.week, at: Date.now(), rows, bestLineup,
+                mae: allMiss.length ? allMiss.reduce((a, m) => a + Math.abs(m.err), 0) / allMiss.length : null,
+                bias: allMiss.length ? allMiss.reduce((a, m) => a + m.err, 0) / allMiss.length : null,
+                missCount: allMiss.length
+            };
+            lsSet(reportKey(league.week), JSON.stringify(rep));
+            return rep;
+        }
+
+        function savedReportWeeks() {
+            const out = [];
+            try {
+                const pre = `rosteriq_report_${league.leagueId}_`;
+                for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(pre)) out.push(Number(k.slice(pre.length))); }
+            } catch (e) { /* storage blocked */ }
+            return out.filter(Boolean).sort((a, b) => b - a);
+        }
+        function showReportWeek(w) { league.reportWeek = Number(w); renderLockReport(); }
+
+        function renderLockReport() {
+            const wrap = document.getElementById('lock-report-wrap');
+            if (!wrap) return;
+            const on = league.sport === 'nba' && isLockFormat() && league.plan?.sport === 'nba';
+            wrap.classList.toggle('tab-off', !on);
+            if (!on) return;
+            const current = buildLockReport();
+            const weeks = savedReportWeeks();
+            const wk = league.reportWeek && weeks.includes(league.reportWeek) ? league.reportWeek : league.week;
+            const rep = wk === league.week ? current : readJSON(reportKey(wk));
+            const body = document.getElementById('lock-report-body');
+            if (!rep || !rep.rows.length) { body.innerHTML = `<div class="text-[11px] text-slate-400">No starters with games this week yet.</div>`; return; }
+            const day = d => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' });
+            // compare only starters whose result is settled both your way and the advice's way
+            const settled = rep.rows.filter(x => x.mine.pts != null && x.model);
+            const sum = f => settled.reduce((a, x) => a + (f(x) ?? 0), 0);
+            const myTotal = sum(x => x.mine.pts), modelTotal = sum(x => x.model?.pts), bestTotal = sum(x => x.best?.pts);
+            const allOver = rep.rows.every(x => x.over);
+            const n = `${settled.length} of ${rep.rows.length} starters`;
+            document.getElementById('lock-report-sub').textContent = settled.length
+                ? `You ${myTotal.toFixed(1)} · advice ${modelTotal.toFixed(1)} · best ${bestTotal.toFixed(1)}${allOver ? '' : ` (${n})`}`
+                : 'Fills in as you lock players';
+            const tile = (label, v, tone, sub) => `<div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800"><div class="text-[10px] text-slate-500">${label}</div><div class="text-lg font-black ${tone}">${v.toFixed(1)}</div><div class="text-[10px] text-slate-500">${sub}</div></div>`;
+            const cell = (o, tone) => o ? `<div class="font-black ${tone}">${o.pts.toFixed(1)}</div><div class="text-[10px] text-slate-500">${o.date ? esc(day(o.date)) : ''}</div>` : `<div class="text-slate-500">–</div>`;
+            const row = x => `
+                <div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px] space-y-1.5">
+                    <div class="flex items-center gap-2">
+                        <span class="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-extrabold text-emerald-400">${esc(x.slot)}</span>
+                        <span class="font-bold text-slate-100 truncate flex-1">${esc(x.name)}</span>
+                        ${x.mine.how === 'locked' ? '<span class="text-[10px] font-bold text-emerald-300"><i class="fa-solid fa-lock mr-0.5"></i>Locked</span>' : x.mine.how === 'open' ? '<span class="text-[10px] text-slate-500">not locked yet</span>' : '<span class="text-[10px] text-slate-500">no lock</span>'}
+                    </div>
+                    <div class="grid grid-cols-3 gap-1.5 text-center">
+                        <div><div class="text-[9px] uppercase text-slate-500">You</div>${x.mine.pts != null ? cell(x.mine, 'text-cyan-200') : '<div class="text-slate-500">open</div>'}</div>
+                        <div><div class="text-[9px] uppercase text-slate-500">Advice</div>${x.model ? cell(x.model, 'text-amber-200') + (x.model.estimated ? '<div class="text-[9px] text-slate-600">estimated</div>' : '') : '<div class="text-slate-500">waiting</div>'}</div>
+                        <div><div class="text-[9px] uppercase text-slate-500">Best${x.over ? '' : ' so far'}</div>${cell(x.best, 'text-emerald-300')}</div>
+                    </div>
+                    <div class="flex flex-wrap gap-1">${x.games.map(g => `<span class="px-1.5 py-0.5 rounded ${g.done ? 'bg-slate-800 text-slate-200' : 'bg-slate-900 text-slate-500 border border-slate-800'}">${esc(day(g.date))} ${g.done ? (g.dnp ? 'DNP' : g.actual.toFixed(1)) : 'upcoming'}${g.mu != null && g.done && !g.dnp ? ` <span class="text-slate-500">/ ${g.mu.toFixed(1)}p</span>` : ''}</span>`).join('')}</div>
+                    ${x.notes.length ? `<div class="space-y-0.5 text-amber-200/90">${x.notes.map(n => `<div><i class="fa-solid fa-circle-info mr-1 text-amber-300"></i>${esc(n)}</div>`).join('')}</div>` : (x.model && x.best && Math.abs(x.model.pts - x.best.pts) < 0.05 ? '<div class="text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>Advice got his best game.</div>' : '')}
+                </div>`;
+            const opts = weeks.includes(league.week) ? weeks : [league.week, ...weeks];
+            body.innerHTML = `
+                ${opts.length > 1 ? `<div class="flex justify-end"><select onchange="showReportWeek(this.value)" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-base sm:text-[11px] text-slate-200">${opts.map(w => `<option value="${w}" ${w === wk ? 'selected' : ''}>Week ${w}${w === league.week ? ' (this week)' : ''}</option>`).join('')}</select></div>` : ''}
+                <div class="grid grid-cols-3 gap-2 text-center">
+                    ${tile('Your locks', myTotal, 'text-cyan-200', 'what counted')}
+                    ${tile('Following advice', modelTotal, 'text-amber-200', 'if you’d followed it')}
+                    ${tile('Best possible', bestTotal, 'text-emerald-300', 'best game each')}
+                </div>
+                <div class="text-[11px] text-slate-500 -mt-1">${allOver ? 'All starters are done for the week.' : `Totals cover the ${n} settled so far (locked, or done for the week).`}</div>
+                <div class="text-[11px] text-slate-400 space-y-0.5">
+                    <div>Best possible lineup${allOver ? '' : ' so far'} (any of your players, each locked on his best game): <strong class="text-slate-200">${rep.bestLineup.toFixed(1)}</strong></div>
+                    ${rep.mae != null ? `<div>Projections were off by <strong class="text-slate-200">${rep.mae.toFixed(1)} pts</strong> a game on average and ran <strong class="text-slate-200">${Math.abs(rep.bias).toFixed(1)} ${rep.bias >= 0 ? 'low' : 'high'}</strong> (${rep.missCount} games).</div>` : ''}
+                </div>
+                ${rep.rows.map(row).join('')}
+                <div class="text-[11px] text-slate-500">Covers your Sleeper starters. "Advice" replays the lock-or-wait advice: it locks the first game that clears the bar this app showed. Bars are saved on this phone when you open the plan; games from before that are <span class="text-slate-400">estimated</span> from current projections. "/ 25.0p" is the projection saved before that game.</div>`;
         }
 
 
@@ -2842,6 +3037,7 @@
             const how = league.formatSrc === 'manual' ? 'set by you' : league.formatSrc === 'auto' ? 'detected from your league' : 'default until players have 2+ games';
             document.getElementById('format-text').textContent = `Format: ${isLockFormat() ? 'Lock-In' : 'Standard (every game counts)'} \u00b7 ${how}`;
             document.getElementById('league-plan-wrap').classList.toggle('tab-off', !isLockFormat());
+            document.getElementById('lock-report-wrap').classList.toggle('tab-off', !(isLockFormat() && league.sport === 'nba' && league.plan?.sport === 'nba'));
         }
         function setLeagueFormat(f) {
             if (!league.leagueId) return;
@@ -3453,6 +3649,7 @@
             document.getElementById('lineup-fix-wrap').classList.add('hidden');
             document.getElementById('league-plan-wrap').classList.add('hidden');
             document.getElementById('league-week-badge').classList.add('hidden');
+            document.getElementById('lock-report-wrap').classList.add('tab-off');
             document.getElementById('format-wrap').classList.add('hidden');
             document.getElementById('format-line').classList.add('hidden');
             document.getElementById('myteam-wrap').open = false;
@@ -3704,6 +3901,7 @@
             document.getElementById('lineup-fix-wrap').classList.remove('hidden');
             document.getElementById('league-plan-wrap').classList.remove('hidden');
             document.getElementById('league-plan-wrap').classList.toggle('tab-off', !isLockFormat());
+            document.getElementById('lock-report-wrap').classList.add('tab-off'); // the lock report is for NBA Lock-In weeks
             const plan = league.plan;
             if (!plan || !plan.chains.length) { el.innerHTML = `<div class="text-xs text-slate-400">No lineup slots found for this league.</div>`; return; }
 
