@@ -459,6 +459,9 @@
         }
 
         async function getJSON(url) {
+            // Your Sleeper lineup and scores change minute to minute: add a unique stamp so
+            // no server or browser copy can hand back an old lineup
+            if (/api\.sleeper\.app\/v1\/league\/[^/]+\/(rosters|matchups)/.test(url)) url += (url.includes('?') ? '&' : '?') + '_=' + Date.now();
             // always check with the server so scores and stats are never stale
             const res = await fetch(url, { cache: 'no-cache' });
             if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
@@ -2213,9 +2216,19 @@
                 <button onclick="loadMyTeam()" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200"><i class="fa-solid fa-rotate mr-1 text-cyan-300"></i>Refresh scores</button>`;
         }
 
+        // When you switch back from the Sleeper app, re-read your lineup so fixes match what you just changed
+        let lastLineupCheck = 0;
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible' || currentTab !== 'sleeper' || !league.leagueId || !league.players.length) return;
+            if (Date.now() - lastLineupCheck < 15000) return;
+            fixLineup();
+            if (document.getElementById('myteam-wrap').open) loadMyTeam();
+        });
+
         // ---------- Fix my lineup: bench starters with no game, start bench players who play ----------
 
         async function fixLineup() {
+            lastLineupCheck = Date.now();
             const box = document.getElementById('lineup-fix');
             const btn = document.getElementById('fix-btn');
             if (!league.leagueId || !league.players.length) { box.innerHTML = `<div class="text-xs text-slate-400">Connect your league first.</div>`; return; }
