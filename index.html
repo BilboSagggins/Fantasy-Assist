@@ -210,6 +210,21 @@
             <div id="league-select-wrap" class="hidden">
                 <select id="league-select" onchange="loadLeague(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-xs text-slate-200 focus:outline-none focus:border-emerald-500"></select>
             </div>
+            <details id="leagues-wrap" class="hidden group/lg rounded-xl bg-slate-900/80 border border-slate-700">
+                <summary class="list-none cursor-pointer select-none flex items-center gap-2.5 p-3">
+                    <span id="lg-avatar" class="w-9 h-9 shrink-0 rounded-lg bg-slate-800 border border-slate-700 overflow-hidden flex items-center justify-center text-slate-400"><i class="fa-solid fa-trophy text-xs"></i></span>
+                    <div class="flex-1 min-w-0">
+                        <div id="lg-name" class="text-sm font-bold text-white truncate">Your league</div>
+                        <div id="lg-sub" class="text-[11px] text-slate-400 truncate"></div>
+                    </div>
+                    <span id="lg-count" class="shrink-0 text-[10px] text-slate-500"></span>
+                    <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/lg:rotate-180"></i>
+                </summary>
+                <div id="leagues-list" class="px-3 pb-3 space-y-1.5"></div>
+            </details>
+            <div id="format-line" class="hidden text-[11px] text-slate-500">
+                <span id="format-text"></span> · <button onclick="document.getElementById('format-wrap').classList.toggle('hidden')" class="underline hover:text-slate-300">change</button>
+            </div>
             <div id="format-wrap" class="hidden flex items-center justify-between gap-2 text-[11px]">
                 <span class="text-slate-400">League format</span>
                 <div class="flex p-0.5 rounded-lg bg-slate-950 border border-slate-800">
@@ -1882,7 +1897,9 @@
                 } else p.decision = null;
 
                 p.value = remaining.length ? (last ? Math.max(last.actual, p.remPlan.value) : p.remPlan.value) : (last ? last.actual : 0);
-                if (!isLockFormat()) { p.value = remaining.reduce((a, g) => a + g.mu, 0); p.decision = null; }
+                p._lockValue = p.value; p._lockDecision = p.decision;
+                p._stdValue = remaining.reduce((a, g) => a + g.mu, 0);
+                if (!isLockFormat()) { p.value = p._stdValue; p.decision = null; }
                 p.gamesLeft = remaining.length;
                 if (!p.unavailable) {
                     if (!p.games.length) p.unavailable = 'No games this week';
@@ -1908,6 +1925,7 @@
                 if (k >= 0 && k < played.length - 1 && !close(last)) p.lockInfo = { status: 'locked', game: played[k] };
                 else if (k === played.length - 1 && Number(c) !== 0) p.lockInfo = { status: 'maybe', game: last };
             });
+            detectFormat(countedPts);
             applyLocks();
 
             // Lineup: most restrictive slots first, best expected locked score
@@ -2707,20 +2725,59 @@
         }
         // League format: Lock-In (one locked game per player) or Standard (every game counts)
         function isLockFormat() { return (league.format || 'lock') === 'lock'; }
+        // Saved per league as {f: 'lock'|'standard', src: 'auto'|'manual'}
+        function savedFormat(id) {
+            const raw = lsGet(`rosteriq_format_${id}`);
+            if (!raw) return null;
+            try { const o = JSON.parse(raw); if (o && o.f) return o; } catch (e) { /* old plain value */ }
+            return { f: raw, src: 'manual' };
+        }
         function paintFormat() {
             const on = 'bg-emerald-500 text-slate-950', off = 'text-slate-400';
             document.getElementById('format-lock').className = `px-2.5 py-1 rounded-md font-bold ${isLockFormat() ? on : off}`;
             document.getElementById('format-standard').className = `px-2.5 py-1 rounded-md font-bold ${isLockFormat() ? off : on}`;
-            document.getElementById('format-wrap').classList.toggle('hidden', !league.leagueId);
+            document.getElementById('format-line').classList.toggle('hidden', !league.leagueId);
+            const how = league.formatSrc === 'manual' ? 'set by you' : league.formatSrc === 'auto' ? 'detected from your league' : 'default until players have 2+ games';
+            document.getElementById('format-text').textContent = `Format: ${isLockFormat() ? 'Lock-In' : 'Standard (every game counts)'} \u00b7 ${how}`;
             document.getElementById('league-plan-wrap').classList.toggle('tab-off', !isLockFormat());
         }
         function setLeagueFormat(f) {
-            if (!league.leagueId || league.format === f) return;
+            if (!league.leagueId) return;
             league.format = f;
-            lsSet(`rosteriq_format_${league.leagueId}`, f);
+            league.formatSrc = 'manual';
+            lsSet(`rosteriq_format_${league.leagueId}`, JSON.stringify({ f, src: 'manual' }));
+            document.getElementById('format-wrap').classList.add('hidden');
             paintFormat();
             refreshLeague().then(() => fixLineup());
             ['myteam', 'fa'].forEach(k => { if (document.getElementById(`${k}-wrap`).open) (k === 'myteam' ? loadMyTeam : loadFreeAgents)(); });
+        }
+
+        // Lock-In: Sleeper counts ONE game per player. Standard: it counts the SUM of his games.
+        // Once players have 2+ games this week, Sleeper's counted points tell the two apart.
+        function detectFormat(counted) {
+            if (league.sport !== 'nba' || league.formatSrc === 'manual') return;
+            let lockV = 0, stdV = 0;
+            league.players.forEach(p => {
+                const c = counted[p.pid];
+                const played = (p.games || []).filter(g => g.done && !g.dnp && g.actual > 0);
+                if (c == null || played.length < 2) return;
+                const C = Number(c), total = played.reduce((a, g) => a + g.actual, 0), max = Math.max(...played.map(g => g.actual));
+                const single = played.some(g => Math.abs(g.actual - C) < 0.15);
+                if (!single && C > max + 1 && C <= total + 0.2) stdV++;      // only possible if games add up
+                else if (single && total - C > 1) lockV++;
+            });
+            const found = stdV >= 1 ? 'standard' : lockV >= 2 ? 'lock' : null;
+            if (!found) return;
+            const changed = found !== league.format;
+            league.format = found;
+            league.formatSrc = 'auto';
+            lsSet(`rosteriq_format_${league.leagueId}`, JSON.stringify({ f: found, src: 'auto' }));
+            if (changed) league.players.forEach(p => {
+                if (p._lockValue == null) return;
+                p.value = isLockFormat() ? p._lockValue : p._stdValue;
+                p.decision = isLockFormat() ? p._lockDecision : null;
+            });
+            paintFormat();
         }
 
         function isLocked(p) {
@@ -3204,6 +3261,7 @@
                 const pref = lsGet('rosteriq_sport') || currentSport;
                 const id = leagues.some(l => l.league_id === saved) ? saved : (pickLeagueFor(pref) || leagues[0].league_id);
                 fillLeagueSelect(null, id);
+                enrichLeagues();
                 await loadLeague(id);
             } catch (e) {
                 setLeagueMsg(`Couldn't connect: ${e.message}`, true);
@@ -3222,7 +3280,65 @@
             const sel = document.getElementById('league-select');
             sel.innerHTML = list.map(l => `<option value="${esc(l.league_id)}">${esc(l.name)} (${l.sport.toUpperCase()})</option>`).join('');
             if (selectedId) sel.value = selectedId;
-            document.getElementById('league-select-wrap').classList.toggle('hidden', list.length < 2);
+            document.getElementById('league-select-wrap').classList.add('hidden'); // replaced by the My leagues card
+            league.pickedId = selectedId || league.pickedId;
+            renderLeagueCards();
+        }
+
+        // Your team name, record and size for every league, so look-alike leagues are easy to tell apart
+        async function enrichLeagues() {
+            const uid = league.user?.user_id;
+            await Promise.all((league.leagues || []).map(async l => {
+                try {
+                    const [rosters, users] = await Promise.all([
+                        getJSON(`${SLEEPER}/league/${l.league_id}/rosters`),
+                        getJSON(`${SLEEPER}/league/${l.league_id}/users`).catch(() => [])
+                    ]);
+                    const mine = (rosters || []).find(r => r.owner_id === uid) || (rosters || []).find(r => (r.co_owners || []).includes(uid));
+                    const me = (users || []).find(u => u.user_id === uid);
+                    const st = mine?.settings || {};
+                    l.meta = {
+                        team: me?.metadata?.team_name || me?.display_name || '',
+                        record: mine ? `${st.wins || 0}-${st.losses || 0}${st.ties ? `-${st.ties}` : ''}` : '',
+                        teams: (rosters || []).length
+                    };
+                } catch (e) { /* leave without details */ }
+            }));
+            renderLeagueCards();
+        }
+
+        function renderLeagueCards() {
+            const wrap = document.getElementById('leagues-wrap');
+            const list = league.leagues || [];
+            if (!list.length) { wrap.classList.add('hidden'); return; }
+            wrap.classList.remove('hidden');
+            const cur = list.find(l => l.league_id === (league.leagueId || league.pickedId)) || list[0];
+            const avatar = l => l.avatar ? `<img src="https://sleepercdn.com/avatars/thumbs/${esc(l.avatar)}" alt="" class="w-full h-full object-cover" onerror="this.remove()">` : `<i class="fa-solid ${l.sport === 'nba' ? 'fa-basketball' : 'fa-football'} text-xs"></i>`;
+            const sub = l => [l.sport.toUpperCase(), l.season, l.meta?.team, l.meta?.record, l.meta?.teams ? `${l.meta.teams} teams` : ''].filter(Boolean).join(' \u00b7 ');
+            document.getElementById('lg-avatar').innerHTML = avatar(cur);
+            document.getElementById('lg-name').textContent = cur.name;
+            document.getElementById('lg-sub').textContent = sub(cur);
+            document.getElementById('lg-count').textContent = list.length > 1 ? `${list.length} leagues` : '';
+            document.getElementById('leagues-list').innerHTML = list.map(l => {
+                const on = l.league_id === cur.league_id;
+                return `
+                <button onclick="pickLeague('${esc(l.league_id)}')" class="w-full flex items-center gap-2.5 p-2 rounded-lg text-left border ${on ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-slate-950/60 border-slate-800 hover:border-slate-600'}">
+                    <span class="w-8 h-8 shrink-0 rounded-lg bg-slate-800 border border-slate-700 overflow-hidden flex items-center justify-center text-slate-400">${avatar(l)}</span>
+                    <span class="flex-1 min-w-0">
+                        <span class="block text-xs font-bold ${on ? 'text-emerald-200' : 'text-slate-100'} truncate">${esc(l.name)}</span>
+                        <span class="block text-[11px] text-slate-400 truncate">${esc(sub(l))}</span>
+                    </span>
+                    ${on ? '<i class="fa-solid fa-circle-check text-emerald-400"></i>' : ''}
+                </button>`;
+            }).join('');
+        }
+
+        function pickLeague(id) {
+            document.getElementById('leagues-wrap').open = false;
+            if (id === league.leagueId) return;
+            league.pickedId = id;
+            fillLeagueSelect(null, id);
+            loadLeague(id);
         }
 
         // Clear everything shown for the previous league
@@ -3236,6 +3352,7 @@
             document.getElementById('league-plan-wrap').classList.add('hidden');
             document.getElementById('league-week-badge').classList.add('hidden');
             document.getElementById('format-wrap').classList.add('hidden');
+            document.getElementById('format-line').classList.add('hidden');
             document.getElementById('myteam-wrap').open = false;
             document.getElementById('myteam-body').innerHTML = '';
             document.getElementById('myteam-sub').textContent = 'Tap to see every starter\'s score';
@@ -3280,7 +3397,10 @@
                 if (!mine) throw new Error('your team was not found in this league');
                 league.info = info;
                 league.roster = mine;
-                league.format = lsGet(`rosteriq_format_${leagueId}`) || 'lock';
+                renderLeagueCards();
+                const sf = savedFormat(leagueId);
+                league.format = sf ? sf.f : 'lock';
+                league.formatSrc = sf ? sf.src : 'default';
                 paintFormat();
                 if (meta.sport === 'nba') {
                     nbaLeagueScoring = info.scoring_settings || null;
