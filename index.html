@@ -4988,8 +4988,10 @@
             body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading league transactions...</div>`;
             const sport = espn.sport;
             try {
-                const periods = sport === 'nba' ? [espn.period, espn.period - 1].filter(x => x > 0) : [espn.period];
-                const results = await Promise.all(periods.map(p => espnFetch(`${espnBase()}?scoringPeriodId=${p}&view=mTransactions2`).catch(() => ({}))));
+                // Without a period ESPN returns the current one. Basketball periods are days, so also ask for yesterday.
+                const urls = [`${espnBase()}?view=mTransactions2`];
+                if (sport === 'nba' && espn.period > 1) urls.push(`${espnBase()}?scoringPeriodId=${espn.period - 1}&view=mTransactions2`);
+                const results = await Promise.all(urls.map(u => espnFetch(u).catch(() => ({}))));
                 const seen = new Set();
                 const txs = [];
                 results.forEach(r => (r.transactions || []).forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); txs.push(t); } }));
@@ -4997,7 +4999,8 @@
                 const end = new Date(start); end.setDate(end.getDate() + 1);
                 const when = t => t.processDate || t.proposedDate || 0;
                 const onDay = t => when(t) >= start.getTime() && when(t) < end.getTime();
-                const real = t => !['DRAFT', 'ROSTER', 'FUTURE_ROSTER'].includes(t.type);
+                // a plain drop comes through as a ROSTER move; lineup changes have only LINEUP items
+                const real = t => t.type !== 'DRAFT' && (t.items || []).some(i => i.type === 'ADD' || i.type === 'DROP');
                 const mine = txs.filter(t => t.teamId === espn.teamId && onDay(t) && real(t) && (t.status === 'EXECUTED' || t.type === 'WAIVER'))
                     .sort((a, b) => when(b) - when(a));
                 const drops = [];
@@ -5026,7 +5029,7 @@
                     : t.status === 'PENDING' ? '<span class="text-cyan-300">Pending</span>'
                     : t.status === 'CANCELED' ? '<span class="text-slate-400">Canceled</span>'
                     : '<span class="text-rose-300">Didn\'t go through</span>';
-                const typeTxt = t => t.type === 'WAIVER' ? 'Waiver claim' : t.type === 'FREEAGENT' ? 'Free agent' : t.type.startsWith('TRADE') ? 'Trade' : t.type;
+                const typeTxt = t => t.type === 'WAIVER' ? 'Waiver claim' : t.type === 'FREEAGENT' ? 'Free agent' : t.type.startsWith('TRADE') ? 'Trade' : (t.items || []).every(i => i.type === 'DROP') ? 'Drop' : 'Roster move';
                 const time = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
                 const mineHtml = mine.map(t => `<div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px] space-y-0.5">
                         <div class="flex items-center justify-between gap-2"><span class="text-slate-400">${typeTxt(t)}${t.bidAmount ? ` · $${t.bidAmount}` : ''} · ${time(when(t))}</span>${statusTxt(t)}</div>
@@ -5044,7 +5047,7 @@
                     ${mineHtml || `<div class="text-[11px] text-slate-500">No moves or waiver claims ${espn.txDay ? 'yesterday' : 'today'}.</div>`}
                     <div class="text-[11px] font-bold text-slate-300 pt-1">Newly available (dropped by other teams)</div>
                     ${availHtml || `<div class="text-[11px] text-slate-500">No drops by other teams ${espn.txDay ? 'yesterday' : 'today'}.</div>`}
-                    <div class="text-[11px] text-slate-500">${sport === 'nfl' ? `Shows week ${espn.period}'s transactions.` : 'Shows the last two days of transactions.'}</div>`;
+                    <div class="text-[11px] text-slate-500">${sport === 'nfl' ? `Shows week ${espn.period}'s transactions.` : 'Shows the last two days of transactions.'} ESPN keeps waiver claims private until they process, so a claim shows up here once waivers run.</div>`;
             } catch (e) {
                 body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load transactions: ${esc(e.message)}</div>`;
             }
