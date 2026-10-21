@@ -212,11 +212,16 @@
             </div>
             <div id="league-msg" class="text-xs text-slate-400">Connect your Sleeper account to get a lock-or-swap plan for every lineup slot this week.</div>
             <div id="lineup-fix-wrap" class="hidden space-y-2">
+                <label class="flex items-center justify-end gap-2 text-[11px] text-slate-400 select-none cursor-pointer">
+                    Auto-collapse cards
+                    <input id="autocollapse" type="checkbox" class="sr-only peer" onchange="setAutoCollapse(this.checked)">
+                    <span class="relative w-9 h-5 rounded-full bg-slate-700 peer-checked:bg-emerald-500 transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"></span>
+                </label>
                 <button id="fix-btn" onclick="fixLineup()" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 text-sm font-extrabold transition">
                     <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Fix my lineup
                 </button>
                 <div id="lineup-fix"></div>
-                <details id="myteam-wrap" class="group/team rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadMyTeam()">
+                <details data-card id="myteam-wrap" class="group/team rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadMyTeam()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-users text-cyan-300"></i>
                         <div class="flex-1 min-w-0">
@@ -227,7 +232,7 @@
                     </summary>
                     <div id="myteam-body" class="px-3 pb-3 space-y-1.5"></div>
                 </details>
-                <details id="league-plan-wrap" class="hidden group/plan rounded-xl bg-slate-900/80 border border-slate-700">
+                <details data-card id="league-plan-wrap" class="hidden group/plan rounded-xl bg-slate-900/80 border border-slate-700">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-lock text-emerald-300"></i>
                         <div class="flex-1 min-w-0">
@@ -238,7 +243,7 @@
                     </summary>
                     <div id="league-plan" class="px-3 pb-3 space-y-3"></div>
                 </details>
-                <details id="fa-wrap" class="group/fa rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadFreeAgents()">
+                <details data-card id="fa-wrap" class="group/fa rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadFreeAgents()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-user-plus text-emerald-300"></i>
                         <div class="flex-1 min-w-0">
@@ -249,7 +254,7 @@
                     </summary>
                     <div id="fa-body" class="px-3 pb-3 space-y-1.5"></div>
                 </details>
-                <details id="ir-wrap" class="group/ir rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadInjuries()">
+                <details data-card id="ir-wrap" class="group/ir rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadInjuries()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-kit-medical text-rose-300"></i>
                         <div class="flex-1 min-w-0">
@@ -2495,6 +2500,26 @@
             if (document.getElementById('myteam-wrap').open) loadMyTeam();
         });
 
+
+        // ---------- Auto-collapse: opening one Sleeper card closes the others ----------
+        let autoCollapse = true;
+        function setAutoCollapse(on) {
+            autoCollapse = !!on;
+            lsSet('rosteriq_autocollapse', on ? '1' : '0');
+        }
+        (function initAutoCollapse() {
+            const saved = lsGet('rosteriq_autocollapse');
+            autoCollapse = saved == null ? true : saved === '1';
+            const box = document.getElementById('autocollapse');
+            if (box) box.checked = autoCollapse;
+            // toggle events don't bubble, so listen while they travel down (capture)
+            document.getElementById('league-panel').addEventListener('toggle', e => {
+                const el = e.target;
+                if (!autoCollapse || !el.open || !el.matches('details[data-card]')) return;
+                document.querySelectorAll('#league-panel details[data-card][open]').forEach(d => { if (d !== el) d.open = false; });
+            }, true);
+        })();
+
         // ---------- Fix my lineup: bench starters with no game, start bench players who play ----------
 
         async function fixLineup() {
@@ -2844,7 +2869,7 @@
 
             box.innerHTML = `
                 <div class="flex gap-2 mb-2">${openBtn}${againBtn}</div>
-                <details ${league.fixPanelOpen ? 'open' : ''} ontoggle="league.fixPanelOpen = this.open" class="group/panel rounded-xl bg-slate-900/80 border ${problems.length ? 'border-amber-800/60' : 'border-slate-700'}">
+                <details data-card ${league.fixPanelOpen ? 'open' : ''} ontoggle="league.fixPanelOpen = this.open" class="group/panel rounded-xl bg-slate-900/80 border ${problems.length ? 'border-amber-800/60' : 'border-slate-700'}">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid ${problems.length ? 'fa-triangle-exclamation text-amber-300' : 'fa-circle-check text-emerald-300'}"></i>
                         <div class="flex-1 min-w-0">
