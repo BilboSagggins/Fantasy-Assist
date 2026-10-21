@@ -2529,12 +2529,21 @@
                         .sort(([a], [b]) => (a.kind === 'tonight' ? 0 : 1) - (b.kind === 'tonight' ? 0 : 1));
                     const label = items[0][0].dayLabel || '';
                     const nOpen = items.filter(([g]) => g.kind === 'tonight').length, nUp = items.length - nOpen;
+                    const meta = [nOpen ? `${nOpen} open` : '', nUp ? `${nUp} upgrade${nUp === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+                    const header = `<span class="text-[11px] font-bold text-cyan-300"><i class="fa-solid fa-calendar-day mr-1"></i>${esc(label)} · ${esc(day(dt))}</span>`;
+                    const cards = items.map(([g, i]) => groupCard(g, i)).join('');
+                    if (label === 'Today') return `
+                        <div class="pt-2 flex items-center justify-between gap-2">${header}<span class="text-[10px] text-slate-500">${meta}</span></div>
+                        ${cards}`;
+                    // Tomorrow starts closed: tap to see it
                     return `
-                        <div class="pt-2 flex items-center justify-between gap-2">
-                            <div class="text-[11px] font-bold text-cyan-300"><i class="fa-solid fa-calendar-day mr-1"></i>${esc(label)} · ${esc(day(dt))}</div>
-                            <div class="text-[10px] text-slate-500">${[nOpen ? `${nOpen} open` : '', nUp ? `${nUp} upgrade${nUp === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</div>
-                        </div>
-                        ${items.map(([g, i]) => groupCard(g, i)).join('')}`;
+                        <details ${league.fixOpen.has('day-' + dt) ? 'open' : ''} ontoggle="setFixOpen('day-${dt}', this.open)" class="group/day pt-2">
+                            <summary class="list-none cursor-pointer select-none flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-950/50 border border-slate-800">
+                                ${header}
+                                <span class="flex items-center gap-2 text-[10px] text-slate-500">${meta}<i class="fa-solid fa-chevron-down transition group-open/day:rotate-180"></i></span>
+                            </summary>
+                            <div class="mt-1.5 space-y-1.5">${cards}</div>
+                        </details>`;
                 }).join('');
             };
             const section = (label, color, icon, list) => list.length ? `
