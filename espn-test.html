@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESPN Connection Test</title>
+<style>
+  :root { --bg:#080c14; --panel:#0f172a; --line:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --ok:#34d399; --bad:#fb7185; --wait:#fbbf24; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding:20px 16px 40px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p { color:var(--muted); margin:0 0 16px; font-size:13px; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .row { display:flex; gap:8px; margin-bottom:16px; }
+  input, select { flex:1; min-width:0; background:#020617; color:var(--text); border:1px solid #334155; border-radius:10px; padding:10px; font-size:16px; }
+  button { background:#10b981; color:#03140d; border:0; border-radius:10px; padding:10px 16px; font-weight:700; font-size:15px; }
+  .test { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; }
+  .test b { display:block; margin-bottom:4px; }
+  .s-ok { color:var(--ok); } .s-bad { color:var(--bad); } .s-wait { color:var(--wait); }
+  .detail { color:var(--muted); font-size:12px; margin-top:4px; word-break:break-word; }
+  #summary { font-weight:700; margin-top:16px; }
+</style>
+</head>
+<body>
+  <h1>ESPN connection test</h1>
+  <p>Checks whether RosterIQ can read a public ESPN league from this site. Nothing is saved or changed.</p>
+  <label for="lid">ESPN league ID</label>
+  <div class="row">
+    <input id="lid" inputmode="numeric" value="893773777">
+    <select id="sport"><option value="ffl">Football</option><option value="fba">Basketball</option></select>
+  </div>
+  <button onclick="run()">Run test</button>
+  <div id="out" style="margin-top:16px"></div>
+  <div id="summary"></div>
+<script>
+const HOSTS = ['https://lm-api-reads.fantasy.espn.com', 'https://fantasy.espn.com'];
+function card(id, title) {
+  document.getElementById('out').insertAdjacentHTML('beforeend',
+    `<div class="test"><b>${title}</b><span id="${id}" class="s-wait">Testing...</span><div id="${id}-d" class="detail"></div></div>`);
+}
+function set(id, ok, text, detail) {
+  const el = document.getElementById(id);
+  el.className = ok ? 's-ok' : 's-bad';
+  el.textContent = (ok ? '✔ ' : '✖ ') + text;
+  document.getElementById(id + '-d').textContent = detail || '';
+}
+async function tryHosts(path, opts) {
+  let last = '';
+  for (const h of HOSTS) {
+    try {
+      const r = await fetch(h + path, opts);
+      if (!r.ok) { last = `${h.replace('https://','')}: HTTP ${r.status}`; continue; }
+      return { host: h, data: await r.json() };
+    } catch (e) { last = `${h.replace('https://','')}: blocked (${e.message})`; }
+  }
+  throw new Error(last);
+}
+async function run() {
+  document.getElementById('out').innerHTML = '';
+  document.getElementById('summary').textContent = '';
+  const id = document.getElementById('lid').value.trim();
+  const sport = document.getElementById('sport').value;
+  const year = new Date().getFullYear();
+  const season = sport === 'fba' && new Date().getMonth() >= 9 ? year + 1 : year;
+  const base = `/apis/v3/games/${sport}/seasons/${season}/segments/0/leagues/${encodeURIComponent(id)}`;
+  const results = [];
+
+  card('t1', '1. League settings and teams');
+  try {
+    const { host, data } = await tryHosts(`${base}?view=mSettings&view=mTeam`);
+    const s = data.settings || {};
+    set('t1', true, `Read "${s.name || 'league'}" (${s.size || '?'} teams)`, `via ${host.replace('https://','')} · scoring ${s.scoringSettings?.scoringType || '?'} · public ${s.isPublic ?? '?'}`);
+    results.push(true);
+  } catch (e) { set('t1', false, 'Blocked or not available', e.message); results.push(false); }
+
+  card('t2', '2. Rosters, lineups and matchups');
+  try {
+    const { host, data } = await tryHosts(`${base}?view=mRoster&view=mMatchupScore`);
+    const teams = (data.teams || []).length, entries = (data.teams || []).reduce((a, t) => a + (t.roster?.entries?.length || 0), 0);
+    set('t2', true, `Read ${teams} roster${teams === 1 ? '' : 's'} (${entries} players)`, `via ${host.replace('https://','')}${entries ? '' : ' · empty until the draft'}`);
+    results.push(true);
+  } catch (e) { set('t2', false, 'Blocked or not available', e.message); results.push(false); }
+
+  card('t3', '3. Free agents (needs a special request header)');
+  try {
+    const filter = { players: { filterStatus: { value: ['FREEAGENT', 'WAIVERS'] }, limit: 25, sortPercOwned: { sortAsc: false, sortPriority: 1 } } };
+    const { host, data } = await tryHosts(`${base}?view=kona_player_info`, { headers: { 'X-Fantasy-Filter': JSON.stringify(filter) } });
+    const n = (data.players || []).length;
+    set('t3', true, `Read ${n} free agent${n === 1 ? '' : 's'}`, `via ${host.replace('https://','')}`);
+    results.push(true);
+  } catch (e) { set('t3', false, 'Blocked', e.message); results.push(false); }
+
+  const ok = results.filter(Boolean).length;
+  document.getElementById('summary').textContent = ok === 3 ? 'All 3 passed: ESPN leagues can work in RosterIQ.'
+    : ok ? `${ok} of 3 passed. Send a screenshot of this page.` : 'All blocked: ESPN won’t let this site read leagues directly. Send a screenshot.';
+}
+run();
+</script>
+</body>
+</html>
