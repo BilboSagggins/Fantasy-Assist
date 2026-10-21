@@ -247,12 +247,23 @@
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-user-plus text-emerald-300"></i>
                         <div class="flex-1 min-w-0">
-                            <div class="text-sm font-bold text-slate-100">Free agent pickups</div>
+                            <div class="text-sm font-bold text-slate-100">Free Agents</div>
                             <div id="fa-sub" class="text-[11px] text-slate-400">Top 50 free agents vs. your roster</div>
                         </div>
                         <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/fa:rotate-180"></i>
                     </summary>
                     <div id="fa-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
+                <details data-card id="tx-wrap" class="group/tx rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadTransactions()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-right-left text-cyan-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Transactions</div>
+                            <div id="tx-sub" class="text-[11px] text-slate-400">Your adds and claims, plus today's drops</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/tx:rotate-180"></i>
+                    </summary>
+                    <div id="tx-body" class="px-3 pb-3 space-y-1.5"></div>
                 </details>
                 <details data-card id="ir-wrap" class="group/ir rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadInjuries()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
@@ -494,7 +505,7 @@
         async function getJSON(url) {
             // Your Sleeper lineup and scores change minute to minute: add a unique stamp so
             // no server or browser copy can hand back an old lineup
-            if (/api\.sleeper\.app\/v1\/league\/[^/]+\/(rosters|matchups)/.test(url)) url += (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+            if (/api\.sleeper\.app\/v1\/league\/[^/]+\/(rosters|matchups|transactions)/.test(url) && !url.includes('_=')) url += (url.includes('?') ? '&' : '?') + '_=' + Date.now();
             // always check with the server so scores and stats are never stale
             const res = await fetch(url, { cache: 'no-cache' });
             if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
@@ -2358,6 +2369,124 @@
             }
         }
 
+
+        // ---------- Transactions: your adds/claims and players other teams just dropped ----------
+        function setTxDay(n) { league.txDay = n; loadTransactions(); }
+
+        async function loadTransactions() {
+            const body = document.getElementById('tx-body');
+            if (!league.leagueId) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            const tok = league.loadSeq;
+            league.txDay = league.txDay || 0;
+            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading league transactions...</div>`;
+            try {
+                const sport = league.sport, week = Number(league.week) || 1, nba = sport === 'nba';
+                const weeks = [week, week - 1].filter(w => w >= 1);
+                await loadRosterDirectory(sport);
+                const [rosters, users, proj, ...txLists] = await Promise.all([
+                    freshRosters(),
+                    getJSON(`${SLEEPER}/league/${league.leagueId}/users`).catch(() => []),
+                    projWeek(sport, league.season, week),
+                    ...weeks.map(w => getJSON(`${SLEEPER}/league/${league.leagueId}/transactions/${w}?_=${Date.now()}`).catch(() => []))
+                ]);
+                if (tok !== league.loadSeq) return;
+                const txns = txLists.flat().filter(Boolean);
+                const myRid = league.roster.roster_id;
+                const rostered = new Set(rosters.flatMap(r => [...(r.players || []), ...(r.reserve || []), ...(r.taxi || [])]).map(String));
+                const userById = {}; (users || []).forEach(u => { userById[u.user_id] = u; });
+                const teamName = rid => {
+                    const r = rosters.find(x => x.roster_id === rid);
+                    const u = r && userById[r.owner_id];
+                    return (u && (u.metadata?.team_name || u.display_name)) || `Team ${rid}`;
+                };
+                const scoring = nba ? nbaLeagueScoring : leagueScoring;
+                const ppg = {};
+                const today = ymdLocal(new Date());
+                (proj || []).forEach(e => {
+                    if (!e || !e.player_id || !e.stats || (nba && e.date && e.date < today)) return;
+                    const v = scoring ? leaguePoints(e.stats, scoring) : (nba ? calculateNBAPoints(sleeperNbaStats(e.stats)) : num(e.stats.pts_ppr));
+                    const a = ppg[e.player_id] = ppg[e.player_id] || { s: 0, n: 0 };
+                    a.s += v; a.n++;
+                });
+                const ppgOf = pid => ppg[pid] && ppg[pid].n ? ppg[pid].s / ppg[pid].n : null;
+                const name = pid => pInfo(String(pid)).name;
+                const when = t => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+
+                // My acquisitions (incl. failed waiver claims), newest first
+                const mine = [];
+                txns.forEach(t => {
+                    const adds = t.adds || {};
+                    Object.entries(adds).forEach(([pid, rid]) => {
+                        if (rid !== myRid) return;
+                        const dropped = Object.entries(t.drops || {}).filter(([, r]) => r === myRid).map(([d]) => d);
+                        mine.push({ pid, t, dropped, time: t.status_updated || t.created });
+                    });
+                });
+                mine.sort((a, b) => b.time - a.time);
+
+                // Players other teams dropped on the chosen day who are still unrostered
+                const base = new Date();
+                const dayStr = ymdLocal(new Date(base.getFullYear(), base.getMonth(), base.getDate() - league.txDay));
+                const avail = [];
+                const seen = new Set();
+                txns.filter(t => t.status === 'complete').sort((a, b) => (b.status_updated || b.created) - (a.status_updated || a.created)).forEach(t => {
+                    const time = t.status_updated || t.created;
+                    if (ymdLocal(new Date(time)) !== dayStr) return;
+                    Object.entries(t.drops || {}).forEach(([pid, rid]) => {
+                        if (rid === myRid || seen.has(pid) || rostered.has(String(pid))) return;
+                        seen.add(pid);
+                        avail.push({ pid, rid, time, info: pInfo(String(pid)), ppg: ppgOf(pid) });
+                    });
+                });
+                avail.sort((a, b) => (b.ppg ?? -1) - (a.ppg ?? -1));
+
+                const okCount = mine.filter(m => m.t.status === 'complete').length;
+                const failCount = mine.filter(m => m.t.status === 'failed').length;
+                document.getElementById('tx-sub').textContent = [
+                    mine.length ? `${okCount} added${failCount ? `, ${failCount} claim${failCount === 1 ? '' : 's'} failed` : ''}` : 'No adds yet',
+                    `${avail.length} dropped ${league.txDay ? 'yesterday' : 'today'}`
+                ].join(' · ');
+
+                const typeTxt = t => t.type === 'waiver' ? `waiver claim${t.settings?.waiver_bid != null ? ` ($${t.settings.waiver_bid})` : ''}` : t.type === 'free_agent' ? 'free agent' : t.type === 'trade' ? 'trade' : t.type;
+                const mineRow = m => {
+                    const ok = m.t.status === 'complete', failed = m.t.status === 'failed';
+                    const info = pInfo(String(m.pid));
+                    return `
+                    <div class="p-2 rounded-lg bg-slate-950/60 border ${ok ? 'border-emerald-500/40' : failed ? 'border-rose-500/40' : 'border-slate-800'} text-[11px] space-y-0.5">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="font-bold ${ok ? 'text-emerald-200' : failed ? 'text-rose-200' : 'text-slate-200'} truncate"><i class="fa-solid ${ok ? 'fa-circle-check' : failed ? 'fa-circle-xmark' : 'fa-clock'} mr-1"></i>${esc(info.name)} <span class="font-normal text-slate-400">${esc(info.team || '')}</span></span>
+                            <span class="shrink-0 text-slate-500">${esc(when(m.time))}</span>
+                        </div>
+                        <div class="text-slate-300">${ok ? 'Added' : failed ? 'Claim failed' : 'Pending'} · ${esc(typeTxt(m.t))}${m.dropped.length ? ` · dropped ${m.dropped.map(d => esc(name(d))).join(', ')}` : ''}</div>
+                        ${failed && m.t.metadata?.notes ? `<div class="text-rose-300/80">${esc(m.t.metadata.notes)}</div>` : ''}
+                    </div>`;
+                };
+                const availRow = a => `
+                    <div class="flex items-center gap-2 p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                        <div class="flex-1 min-w-0">
+                            <div class="font-bold text-slate-100 truncate">${esc(a.info.name)} <span class="font-normal text-slate-400">${esc(a.info.team || 'FA')} ${esc((a.info.fpos || [a.info.pos || '']).join('/'))}</span>${a.info.injury ? ` <span class="text-rose-300">${esc(a.info.injury)}</span>` : ''}</div>
+                            <div class="text-slate-500">Dropped by ${esc(teamName(a.rid))} · ${esc(new Date(a.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</div>
+                        </div>
+                        <div class="shrink-0 text-right"><div class="font-black text-emerald-300">${a.ppg != null ? a.ppg.toFixed(1) : '–'}</div><div class="text-[9px] text-slate-500">proj/game</div></div>
+                    </div>`;
+                const tab = (n, label) => `<button onclick="setTxDay(${n})" class="flex-1 py-1.5 rounded-lg text-[11px] font-bold ${league.txDay === n ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/40' : 'bg-slate-950/60 text-slate-400 border border-slate-800'}">${label}</button>`;
+
+                body.innerHTML = `
+                    <div class="text-[11px] font-bold text-emerald-300">My acquisitions <span class="font-normal text-slate-500">this week and last</span></div>
+                    ${mine.length ? mine.map(mineRow).join('') : `<div class="text-[11px] text-slate-400">No adds or waiver claims yet.</div>`}
+                    <div class="pt-2 text-[11px] font-bold text-cyan-300">Newly available <span class="font-normal text-slate-500">dropped by other teams</span></div>
+                    <div class="flex gap-1.5">${tab(0, 'Today')}${tab(1, 'Yesterday')}</div>
+                    ${avail.length ? avail.map(availRow).join('') : `<div class="text-[11px] text-slate-400">No players dropped ${league.txDay ? 'yesterday' : 'today'} who are still available.</div>`}
+                    <div class="text-[11px] text-slate-500">Dropped players may sit on waivers before they're free agents.</div>
+                    <div class="flex gap-2">
+                        <a href="https://sleeper.com/leagues/${encodeURIComponent(league.leagueId)}/players" target="_blank" rel="noopener" class="flex-1 text-center py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Sleeper</a>
+                        <button onclick="loadTransactions()" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200"><i class="fa-solid fa-rotate mr-1 text-cyan-300"></i>Refresh</button>
+                    </div>`;
+            } catch (e) {
+                body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load transactions: ${esc(e.message)}</div>`;
+            }
+        }
+
         // ---------- My lineup scores ----------
         const ymdLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const fmtPts = v => (Math.round(v * 100) / 100).toFixed(Math.abs(v * 10 - Math.round(v * 10)) > 1e-9 ? 2 : 1);
@@ -3072,9 +3201,10 @@
             document.getElementById('myteam-wrap').open = false;
             document.getElementById('myteam-body').innerHTML = '';
             document.getElementById('myteam-sub').textContent = 'Tap to see every starter\'s score';
-            ['fa', 'ir'].forEach(k => { document.getElementById(`${k}-wrap`).open = false; document.getElementById(`${k}-body`).innerHTML = ''; });
+            ['fa', 'ir', 'tx'].forEach(k => { document.getElementById(`${k}-wrap`).open = false; document.getElementById(`${k}-body`).innerHTML = ''; });
             document.getElementById('fa-sub').textContent = 'Top 50 free agents vs. your roster';
             document.getElementById('ir-sub').textContent = 'Tap to check injuries and IR moves';
+            document.getElementById('tx-sub').textContent = 'Your adds and claims, plus today\'s drops';
         }
 
         // Switching NFL <-> NBA: show that sport's league, never the other sport's info
