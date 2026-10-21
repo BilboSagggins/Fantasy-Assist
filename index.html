@@ -1849,7 +1849,33 @@
                 if (best) { sl.p = best; used.add(best.pid); }
             });
             if (tok !== league.loadSeq) return; // switched leagues/sports meanwhile
-            league.plan = { sport: 'nba', lineup: lineup.sort((a, b) => a.idx - b.idx), bench: league.players.filter(p => !used.has(p.pid)) };
+            // Players in your real Sleeper lineup who aren't in the best lineup: locking one keeps him in
+            // that slot all week, so he must beat the weakest best-lineup player whose slot he'd take
+            // (and what waiting for his own later games is worth).
+            const actualPos = (league.info.roster_positions || []).filter(x => !['BN', 'IR', 'TAXI'].includes(x));
+            const actualStarters = (league.roster.starters || []).map(String);
+            const extra = [];
+            league.players.forEach(p => { p.displace = null; p.extraBar = null; });
+            actualStarters.forEach((pid, i) => {
+                const p = league.players.find(x => x.pid === pid);
+                if (!p || used.has(pid) || !p.games || !p.games.length) return;
+                const rivals = lineup.filter(sl => sl.p && sl.p !== p && !isLocked(sl.p) && nbaFits(p, sl.slot));
+                const weakest = rivals.sort((a, b) => a.p.value - b.p.value)[0];
+                if (weakest) p.displace = { name: weakest.p.name, slot: weakest.slot, value: weakest.p.value };
+                p.extraBar = Math.max(p.displace ? p.displace.value : 0, p.remPlan.steps.length ? p.remPlan.value : 0);
+                if (isLocked(p)) {
+                    p.extraBar = null;
+                    p.decision = { kind: 'final', text: `Locked in: his locked game counts for this slot this week.` };
+                } else if (p.lockable && !p.lockable.dnp) {
+                    const g = p.lockable, bar = p.extraBar;
+                    const why = p.displace ? `${p.displace.name}'s expected ${p.displace.value.toFixed(1)} at ${p.displace.slot}` : 'what his remaining games are worth';
+                    p.decision = g.actual >= bar
+                        ? { kind: 'lock', text: `LOCK his ${fmtDate(`${g.date}T12:00:00`)} game: ${g.actual.toFixed(1)} pts beats ${why}.` }
+                        : { kind: 'swap', text: `Don't lock: ${g.actual.toFixed(1)} pts is below ${bar.toFixed(1)} (${why}). Bench him or keep waiting.` };
+                }
+                extra.push({ slot: actualPos[i] || 'UTIL', idx: i, p, extra: true });
+            });
+            league.plan = { sport: 'nba', lineup: lineup.sort((a, b) => a.idx - b.idx), extra, bench: league.players.filter(p => !used.has(p.pid) && !extra.some(e => e.p === p)) };
             league.updated = new Date();
             renderNbaPlan();
             setLeagueMsg(`${league.info.name} · ${nbaLeagueScoring ? 'your league’s exact scoring' : 'points scoring'} · updated ${league.updated.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
@@ -1871,6 +1897,7 @@
 
             const playerCard = (sl) => {
                 const p = sl.p;
+                const xb = sl.extra ? p.extraBar : null; // "beat the best lineup" bar for your extra starters
                 if (!p) return `<div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-[11px] text-rose-300"><span class="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-extrabold text-emerald-400 mr-2">${esc(sl.slot)}</span>No healthy eligible player.</div>`;
                 const steps = p.remPlan.steps;
                 return `
@@ -1899,12 +1926,17 @@
                                 const score = `<span class="text-white font-bold">Final · ${g.actual.toFixed(1)} pts</span>`;
                                 if (g.dnp) advice = `<span class="text-slate-400">Final · no stats from Sleeper yet</span>`;
                                 else if (g.benched) advice = `${score} <span class="text-slate-500">(on your bench, can't lock)</span>`;
-                                else if (p.lockable === g && steps.length) {
-                                    const bar = p.remPlan.value;
+                                else if (p.lockable === g && (steps.length || xb != null)) {
+                                    const bar = xb != null ? xb : p.remPlan.value;
                                     const yes = g.actual >= bar;
                                     advice = `${score}<br>Lock if <strong class="text-white">${bar.toFixed(1)}+</strong> → <strong class="${yes ? 'text-emerald-300' : 'text-amber-300'}">${yes ? 'lock it' : 'wait'}</strong> <span class="text-slate-500">(until his next game starts)</span>`;
                                 } else if (p.lockable === g) advice = `${score}<br>Last game — counts if nothing's locked`;
                                 else advice = `${score} <span class="text-slate-500">· can no longer lock</span>`;
+                            }
+                            else if (xb != null) {
+                                const bar = Math.max(xb, st && st.threshold != null ? st.threshold : 0);
+                                const pct = Math.round((1 - normCdf((bar - g.mu) / g.sd)) * 100);
+                                advice = `Lock if <strong class="text-white">${bar.toFixed(1)}+</strong> (~${pct}%)${p.displace ? `, beats ${esc(p.displace.name)} at ${esc(p.displace.slot)}` : ''}${next ? `, else wait for ${esc(day(next.date))}` : ', else bench him'}`;
                             }
                             else if (st && st.threshold != null) {
                                 const pct = Math.round((1 - normCdf((st.threshold - g.mu) / g.sd)) * 100);
@@ -1930,6 +1962,10 @@
                     <div class="text-emerald-200/80">Ranked by expected locked score, which counts games left as well as projection. Expected total: <strong>${total.toFixed(1)} pts</strong></div>
                 </div>
                 ${lineup.map(playerCard).join('')}
+                ${(league.plan.extra || []).length ? `
+                    <div class="pt-2 text-xs font-bold text-violet-300"><i class="fa-solid fa-user-plus mr-1"></i>Also in your Sleeper lineup</div>
+                    <div class="text-[11px] text-slate-400">Started for a big game. Locking him keeps him in that slot all week, so he needs to beat the weakest player he'd push out of the best lineup.</div>
+                    ${league.plan.extra.map(playerCard).join('')}` : ''}
                 ${bench.length ? `
                     <details class="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
                         <summary class="cursor-pointer font-bold text-slate-300">Bench (${bench.length})</summary>
