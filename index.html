@@ -2508,7 +2508,7 @@
             body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading league transactions...</div>`;
             try {
                 const sport = league.sport, week = Number(league.week) || 1, nba = sport === 'nba';
-                const weeks = [week, week - 1].filter(w => w >= 1);
+                const weeks = [week + 1, week, week - 1].filter(w => w >= 1); // next week too, in case a claim is filed for when it processes
                 await loadRosterDirectory(sport);
                 const [rosters, users, proj, ...txLists] = await Promise.all([
                     freshRosters(),
@@ -2545,7 +2545,8 @@
 
                 // Mine, that day: anything that went through, plus every waiver claim (even failed ones)
                 const mine = [];
-                txns.filter(onDay).forEach(t => {
+                // a claim still waiting to process always shows, whatever day is picked
+                txns.filter(t => onDay(t) || t.status === 'pending').forEach(t => {
                     if (!(t.roster_ids || []).includes(myRid)) return;
                     if (t.status !== 'complete' && t.type !== 'waiver') return;
                     const time = t.status_updated || t.created;
