@@ -85,7 +85,7 @@
         <div class="w-full max-w-md flex flex-col items-center text-center py-10">
             <img src="icons/logo.png" alt="" width="80" height="80" class="w-20 h-20 rounded-2xl shadow-2xl ring-1 ring-slate-600">
             <h1 class="mt-4 text-3xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">RosterIQ</h1>
-            <p class="mt-1 text-sm text-slate-400">Start/sit help and lineup fixes for your Sleeper leagues</p>
+            <p class="mt-1 text-sm text-slate-400">Start/sit help and lineup fixes for your Sleeper and ESPN leagues</p>
             <p class="mt-8 text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Choose a sport</p>
             <div class="mt-4 grid grid-cols-2 gap-4 w-full">
                 <button id="landing-nfl" onclick="chooseSport('nfl')" class="group relative aspect-square rounded-3xl bg-slate-900/80 border border-slate-700 hover:border-emerald-500 active:scale-95 transition flex flex-col items-center justify-center gap-3 text-white shadow-xl">
@@ -117,6 +117,10 @@
             <button id="landing-sleeper" onclick="chooseSport('sleeper')" class="mt-4 w-full py-4 rounded-2xl bg-slate-900/80 border border-slate-700 hover:border-emerald-500 active:scale-95 transition flex items-center justify-center gap-3 text-white shadow-xl">
                 <i class="fa-solid fa-list-check text-xl text-emerald-300"></i>
                 <span class="text-base font-black tracking-wide">My Sleeper league</span>
+            </button>
+            <button id="landing-espn" onclick="chooseSport('espn')" class="mt-3 w-full py-4 rounded-2xl bg-slate-900/80 border border-slate-700 hover:border-emerald-500 active:scale-95 transition flex items-center justify-center gap-3 text-white shadow-xl">
+                <i class="fa-solid fa-tv text-xl text-red-400"></i>
+                <span class="text-base font-black tracking-wide">My ESPN league</span>
             </button>
             <p class="mt-6 text-[11px] text-slate-500">Tap the logo at the top of the app to come back here.</p>
         </div>
@@ -151,6 +155,10 @@
                 <button id="sport-sleeper-btn" onclick="setTab('sleeper')" class="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
                     <i class="fa-solid fa-list-check text-sm"></i>
                     <span>Sleeper</span>
+                </button>
+                <button id="sport-espn-btn" onclick="setTab('espn')" class="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-tv text-sm"></i>
+                    <span>ESPN</span>
                 </button>
             </div>
 
@@ -305,6 +313,107 @@
                 </summary>
                 <div id="reminder-body" class="mt-2 p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 text-[11px] text-slate-300"></div>
             </details>
+        </section>
+
+        <!-- My ESPN league (public leagues) -->
+        <section id="espn-panel" class="tab-off glass-panel rounded-2xl p-4 sm:p-5 border border-slate-800 space-y-3 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+                <h3 class="font-bold text-white text-sm sm:text-base flex items-center gap-2">
+                    <i class="fa-solid fa-tv text-red-400"></i>
+                    <span>My ESPN league</span>
+                </h3>
+                <span id="espn-week-badge" class="hidden text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-emerald-400 border border-slate-700 font-bold uppercase tracking-wide"></span>
+            </div>
+            <details id="espn-leagues-wrap" class="hidden group/el rounded-xl bg-slate-900/80 border border-slate-700">
+                <summary class="list-none cursor-pointer select-none flex items-center gap-2.5 p-3">
+                    <span class="w-9 h-9 shrink-0 rounded-lg bg-slate-800 border border-slate-700 overflow-hidden flex items-center justify-center text-slate-400" id="espn-lg-avatar"><i class="fa-solid fa-trophy text-xs"></i></span>
+                    <div class="flex-1 min-w-0">
+                        <div id="espn-lg-name" class="text-sm font-bold text-white truncate">Your league</div>
+                        <div id="espn-lg-sub" class="text-[11px] text-slate-400 truncate"></div>
+                    </div>
+                    <span id="espn-lg-count" class="shrink-0 text-[10px] text-slate-500"></span>
+                    <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/el:rotate-180"></i>
+                </summary>
+                <div id="espn-leagues-list" class="px-3 pb-3 space-y-1.5"></div>
+            </details>
+            <div id="espn-connect" class="space-y-2">
+                <div class="flex items-center justify-between gap-2 text-[11px]">
+                    <span class="text-slate-400">Sport</span>
+                    <div class="flex p-0.5 rounded-lg bg-slate-950 border border-slate-800">
+                        <button id="espn-sport-nfl" onclick="setEspnSport('nfl')" class="px-2.5 py-1 rounded-md font-bold">Football</button>
+                        <button id="espn-sport-nba" onclick="setEspnSport('nba')" class="px-2.5 py-1 rounded-md font-bold">Basketball</button>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <input id="espn-league-id" type="text" inputmode="numeric" placeholder="ESPN league ID" autocomplete="off" enterkeyhint="go"
+                        onkeydown="if (event.key === 'Enter') connectEspn()"
+                        class="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
+                    <button onclick="connectEspn()" class="shrink-0 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition">Connect</button>
+                </div>
+                <div class="text-[11px] text-slate-500">The ID is the number after <span class="text-slate-300">leagueId=</span> in your league's web link. Only public leagues can be read.</div>
+            </div>
+            <div id="espn-msg" class="text-xs text-slate-400">Enter your ESPN league ID to check your lineup, free agents and injuries.</div>
+            <div id="espn-teams" class="hidden space-y-1.5"></div>
+            <div id="espn-cards" class="hidden space-y-2">
+                <label class="flex items-center justify-end gap-2 text-[11px] text-slate-400 select-none cursor-pointer">
+                    Auto-collapse cards
+                    <input id="autocollapse-espn" type="checkbox" class="sr-only peer" onchange="setAutoCollapse(this.checked)">
+                    <span class="relative w-9 h-5 rounded-full bg-slate-700 peer-checked:bg-emerald-500 transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"></span>
+                </label>
+                <button id="espn-fix-btn" onclick="espnFixLineup()" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 text-sm font-extrabold transition">
+                    <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Fix my lineup
+                </button>
+                <div id="espn-fix"></div>
+                <div class="flex gap-2">
+                    <a id="espn-open" href="#" target="_blank" rel="noopener" class="flex-1 text-center py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open ESPN</a>
+                    <button onclick="espnRefresh()" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold"><i class="fa-solid fa-rotate mr-1"></i>Check again</button>
+                </div>
+                <details data-card id="espn-team-wrap" class="group/et rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadScores()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-users text-cyan-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-cyan-200">My lineup scores</div>
+                            <div id="espn-team-sub" class="text-[11px] text-slate-400">Tap to see every starter's score</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/et:rotate-180"></i>
+                    </summary>
+                    <div id="espn-team-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
+                <details data-card id="espn-fa-wrap" class="group/efa rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadFreeAgents()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-user-plus text-emerald-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Free Agents</div>
+                            <div id="espn-fa-sub" class="text-[11px] text-slate-400">Top 50 free agents vs. your roster</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/efa:rotate-180"></i>
+                    </summary>
+                    <div id="espn-fa-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
+                <details data-card id="espn-tx-wrap" class="group/etx rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadTransactions()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-right-left text-cyan-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Transactions</div>
+                            <div class="text-[11px] text-slate-400">Your moves, waiver claims and other teams' drops</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/etx:rotate-180"></i>
+                    </summary>
+                    <div id="espn-tx-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
+                <details data-card id="espn-ir-wrap" class="group/eir rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadInjuries()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-kit-medical text-rose-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Injuries &amp; IR</div>
+                            <div id="espn-ir-sub" class="text-[11px] text-slate-400">Tap to check injuries and IR moves</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/eir:rotate-180"></i>
+                    </summary>
+                    <div id="espn-ir-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
+                <div class="text-[11px] text-slate-500 text-center"><button onclick="espnShowConnect()" class="underline hover:text-slate-300">Add another ESPN league</button> · <button onclick="espnPickTeamAgain()" class="underline hover:text-slate-300">Pick a different team</button></div>
+            </div>
         </section>
 
         <!-- Player Selection Cards Row (3 Slots) -->
@@ -617,8 +726,8 @@
             const savedUser = lsGet('rosteriq_user');
             if (savedUser) document.getElementById('league-username').value = savedUser;
             const qs = new URLSearchParams(location.search);
-            const askSport = qs.get('tab') === 'sleeper' ? 'sleeper' : qs.get('sport');
-            if (askSport === 'nba' || askSport === 'nfl' || askSport === 'sleeper') chooseSport(askSport); // opened from a notification
+            const askSport = ['sleeper', 'espn'].includes(qs.get('tab')) ? qs.get('tab') : qs.get('sport');
+            if (['nba', 'nfl', 'sleeper', 'espn'].includes(askSport)) chooseSport(askSport); // opened from a notification
             else showLanding(); // data loads after you pick NFL or NBA
         };
 
@@ -627,14 +736,16 @@
         const TAB_ON = "flex-1 sm:flex-none flex items-center justify-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-emerald-500 text-slate-950 shadow";
         const TAB_OFF = "flex-1 sm:flex-none flex items-center justify-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white";
         function paintTabs() {
-            ['nfl', 'nba', 'sleeper'].forEach(t => { document.getElementById(`sport-${t}-btn`).className = t === currentTab ? TAB_ON : TAB_OFF; });
+            ['nfl', 'nba', 'sleeper', 'espn'].forEach(t => { document.getElementById(`sport-${t}-btn`).className = t === currentTab ? TAB_ON : TAB_OFF; });
         }
         function setTab(tab) {
             currentTab = tab;
-            const sleeper = tab === 'sleeper';
-            document.querySelectorAll('[data-tab="sports"]').forEach(el => el.classList.toggle('tab-off', sleeper));
+            const sleeper = tab === 'sleeper', espnTab = tab === 'espn';
+            document.querySelectorAll('[data-tab="sports"]').forEach(el => el.classList.toggle('tab-off', sleeper || espnTab));
             document.getElementById('league-panel').classList.toggle('tab-off', !sleeper);
-            if (!sleeper) { switchSport(tab); loadRosterDirectory(tab); }
+            document.getElementById('espn-panel').classList.toggle('tab-off', !espnTab);
+            if (espnTab) espnInit();
+            else if (!sleeper) { switchSport(tab); loadRosterDirectory(tab); }
             paintTabs();
             window.scrollTo(0, 0);
         }
@@ -815,7 +926,7 @@
             document.body.style.overflow = 'hidden';
         }
         function chooseSport(tab) {
-            if (tab !== 'sleeper') lsSet('rosteriq_sport', tab);
+            if (tab === 'nfl' || tab === 'nba') lsSet('rosteriq_sport', tab);
             document.getElementById('landing').classList.add('hidden');
             document.body.style.overflow = '';
             const first = !appStarted;
@@ -2671,6 +2782,7 @@
         let autoCollapse = true;
         function setAutoCollapse(on) {
             autoCollapse = !!on;
+            ['autocollapse', 'autocollapse-espn'].forEach(i => { const b = document.getElementById(i); if (b) b.checked = autoCollapse; });
             lsSet('rosteriq_autocollapse', on ? '1' : '0');
         }
         (function initAutoCollapse() {
@@ -2679,11 +2791,11 @@
             const box = document.getElementById('autocollapse');
             if (box) box.checked = autoCollapse;
             // toggle events don't bubble, so listen while they travel down (capture)
-            document.getElementById('league-panel').addEventListener('toggle', e => {
+            ['league-panel', 'espn-panel'].forEach(id => document.getElementById(id).addEventListener('toggle', e => {
                 const el = e.target;
                 if (!autoCollapse || !el.open || !el.matches('details[data-card]')) return;
-                document.querySelectorAll('#league-panel details[data-card][open]').forEach(d => { if (d !== el) d.open = false; });
-            }, true);
+                document.querySelectorAll(`#${id} details[data-card][open]`).forEach(d => { if (d !== el) d.open = false; });
+            }, true));
         })();
 
         // ---------- Fix my lineup: bench starters with no game, start bench players who play ----------
@@ -4285,6 +4397,657 @@
             renderComparisonGrid();
             updateStartSitRecommendation();
             updateCharts();
+        }
+
+        // ---------- ESPN public leagues ----------
+        // ESPN's fantasy API answers any page for public leagues. Private leagues need a
+        // sign-in cookie the app can't get, so they return 401.
+        const ESPN_HOSTS = ['https://lm-api-reads.fantasy.espn.com', 'https://fantasy.espn.com'];
+        const ESPN_GAME = { nfl: 'ffl', nba: 'fba' };
+        const ESPN_SITE_PATH = { nfl: 'football', nba: 'basketball' };
+        const ESPN_SLOT = {
+            nfl: { 0: 'QB', 1: 'TQB', 2: 'RB', 3: 'RB/WR', 4: 'WR', 5: 'WR/TE', 6: 'TE', 7: 'OP', 8: 'DT', 9: 'DE', 10: 'LB', 11: 'DL', 12: 'CB', 13: 'S', 14: 'DB', 15: 'DP', 16: 'D/ST', 17: 'K', 18: 'P', 19: 'HC', 20: 'BN', 21: 'IR', 23: 'FLEX', 24: 'ER' },
+            nba: { 0: 'PG', 1: 'SG', 2: 'SF', 3: 'PF', 4: 'C', 5: 'G', 6: 'F', 7: 'SG/SF', 8: 'G/F', 9: 'PF/C', 10: 'F/C', 11: 'UTIL', 12: 'BN', 13: 'IR' }
+        };
+        const ESPN_BENCH = { nfl: 20, nba: 12 };
+        const ESPN_IR = { nfl: 21, nba: 13 };
+        const ESPN_POS = {
+            nfl: { 1: 'QB', 2: 'RB', 3: 'WR', 4: 'TE', 5: 'K', 16: 'D/ST' },
+            nba: { 1: 'PG', 2: 'SG', 3: 'SF', 4: 'PF', 5: 'C', 6: 'G', 7: 'F' }
+        };
+        const ESPN_INJ = { QUESTIONABLE: 'Questionable', DOUBTFUL: 'Doubtful', OUT: 'Out', INJURY_RESERVE: 'IR', SUSPENSION: 'Suspended', DAY_TO_DAY: 'Day-to-day', SEVEN_DAY_DL: 'Out', TEN_DAY_DL: 'Out', FIFTEEN_DAY_DL: 'Out' };
+        const ESPN_CANT_PLAY = ['OUT', 'INJURY_RESERVE', 'SUSPENSION', 'SEVEN_DAY_DL', 'TEN_DAY_DL', 'FIFTEEN_DAY_DL'];
+
+        const espn = { sport: 'nfl', leagueId: null, teamId: null, season: null, host: null, data: null, period: null, roster: [], txDay: 0, loadedAt: 0 };
+        const espnProCache = {};
+
+        function espnSaved() { try { return JSON.parse(lsGet('rosteriq_espn_leagues') || '[]'); } catch (e) { return []; } }
+        function espnSave(list) { lsSet('rosteriq_espn_leagues', JSON.stringify(list)); }
+        function espnKey(sport, id) { return `${sport}:${id}`; }
+        function espnMsg(text, isError) {
+            const el = document.getElementById('espn-msg');
+            el.innerHTML = text;
+            el.className = `text-xs ${isError ? 'text-rose-300' : 'text-slate-400'}`;
+        }
+
+        async function espnFetch(path, filter) {
+            const opts = { cache: 'no-cache' };
+            if (filter) opts.headers = { 'X-Fantasy-Filter': JSON.stringify(filter) };
+            const url = path + (path.includes('?') ? '&' : '?') + '_=' + Date.now();
+            const hosts = espn.host ? [espn.host, ...ESPN_HOSTS.filter(h => h !== espn.host)] : ESPN_HOSTS;
+            let lastErr;
+            for (const h of hosts) {
+                let r;
+                try { r = await fetch(h + url, opts); } catch (e) { lastErr = e; continue; }
+                if (r.status === 401 || r.status === 403) { const e = new Error('This league is private. Only public ESPN leagues can be read.'); e.code = 'private'; throw e; }
+                if (r.status === 404) { const e = new Error('League not found'); e.code = 'notfound'; throw e; }
+                if (!r.ok) { lastErr = new Error(`ESPN answered ${r.status}`); continue; }
+                espn.host = h;
+                return r.json();
+            }
+            throw lastErr || new Error("Couldn't reach ESPN");
+        }
+        function espnBase(sport = espn.sport, season = espn.season, id = espn.leagueId) {
+            return `/apis/v3/games/${ESPN_GAME[sport]}/seasons/${season}/segments/0/leagues/${id}`;
+        }
+        // NFL season = year it starts (Sept). NBA season = year it ends (2026-27 => 2027).
+        function espnSeasons(sport) {
+            const d = new Date(), y = d.getFullYear(), m = d.getMonth();
+            return sport === 'nfl' ? (m >= 2 ? [y, y - 1] : [y - 1, y]) : (m >= 7 ? [y + 1, y] : [y, y + 1]);
+        }
+
+        // Pro team schedules: abbreviations, bye weeks and every game by scoring period
+        function espnProTeams(sport, season) {
+            const k = `${sport}:${season}`;
+            if (!espnProCache[k]) {
+                espnProCache[k] = espnFetch(`/apis/v3/games/${ESPN_GAME[sport]}/seasons/${season}?view=proTeamSchedules_wl`)
+                    .then(d => {
+                        const byId = {};
+                        (d.settings?.proTeams || []).forEach(t => byId[t.id] = t);
+                        return byId;
+                    })
+                    .catch(e => { delete espnProCache[k]; throw e; });
+            }
+            return espnProCache[k];
+        }
+
+        // ---- the UI ----
+        function setEspnSport(s) {
+            espn.sport = s;
+            ['nfl', 'nba'].forEach(x => document.getElementById(`espn-sport-${x}`).className =
+                `px-2.5 py-1 rounded-md font-bold ${x === s ? 'bg-emerald-500 text-slate-950' : 'text-slate-400'}`);
+        }
+        let espnStarted = false;
+        function espnInit() {
+            if (espnStarted) return;
+            espnStarted = true;
+            setEspnSport('nfl');
+            const box = document.getElementById('autocollapse-espn');
+            if (box) box.checked = autoCollapse;
+            const list = espnSaved();
+            const last = lsGet('rosteriq_espn_last');
+            const pick = list.find(l => espnKey(l.sport, l.id) === last) || list[0];
+            renderEspnLeagues();
+            if (pick) openEspnLeague(pick.sport, pick.id);
+        }
+        function espnShowConnect() {
+            document.getElementById('espn-connect').classList.remove('hidden');
+            document.getElementById('espn-league-id').focus();
+        }
+        function renderEspnLeagues() {
+            const list = espnSaved();
+            const wrap = document.getElementById('espn-leagues-wrap');
+            wrap.classList.toggle('hidden', !list.length);
+            document.getElementById('espn-connect').classList.toggle('hidden', !!list.length && !!espn.leagueId);
+            if (!list.length) return;
+            const cur = list.find(l => l.sport === espn.sport && String(l.id) === String(espn.leagueId)) || list[0];
+            document.getElementById('espn-lg-name').textContent = cur.teamName || cur.name || `League ${cur.id}`;
+            document.getElementById('espn-lg-sub').textContent = `${cur.sport === 'nba' ? 'NBA' : 'NFL'} · ${cur.name || 'ESPN league'}${cur.record ? ' · ' + cur.record : ''}`;
+            document.getElementById('espn-lg-avatar').innerHTML = cur.logo
+                ? `<img src="${esc(cur.logo)}" alt="" class="w-full h-full object-cover" onerror="this.remove()">`
+                : `<i class="fa-solid fa-trophy text-xs"></i>`;
+            document.getElementById('espn-lg-count').textContent = list.length > 1 ? `${list.length} leagues` : '';
+            document.getElementById('espn-leagues-list').innerHTML = list.map(l => {
+                const on = l === cur;
+                return `<div class="flex items-center gap-2 p-2 rounded-lg ${on ? 'bg-emerald-500/10 border border-emerald-500/40' : 'bg-slate-950/60 border border-slate-800'}">
+                    <button onclick="openEspnLeague('${l.sport}', '${esc(String(l.id))}')" class="flex-1 min-w-0 text-left">
+                        <div class="text-[12px] font-bold ${on ? 'text-emerald-200' : 'text-slate-200'} truncate">${esc(l.teamName || 'Pick your team')}</div>
+                        <div class="text-[11px] text-slate-500 truncate">${l.sport === 'nba' ? 'NBA' : 'NFL'} · ${esc(l.name || 'League ' + l.id)}${l.record ? ' · ' + esc(l.record) : ''}</div>
+                    </button>
+                    <button onclick="removeEspnLeague('${l.sport}', '${esc(String(l.id))}')" class="shrink-0 text-[10px] text-slate-500 hover:text-rose-300 underline">remove</button>
+                </div>`;
+            }).join('');
+        }
+        function removeEspnLeague(sport, id) {
+            espnSave(espnSaved().filter(l => espnKey(l.sport, l.id) !== espnKey(sport, id)));
+            if (espn.sport === sport && String(espn.leagueId) === String(id)) {
+                espn.leagueId = null; espn.data = null;
+                document.getElementById('espn-cards').classList.add('hidden');
+                document.getElementById('espn-teams').classList.add('hidden');
+                document.getElementById('espn-week-badge').classList.add('hidden');
+                const next = espnSaved()[0];
+                renderEspnLeagues();
+                if (next) openEspnLeague(next.sport, next.id);
+                else { espnShowConnect(); espnMsg('Enter your ESPN league ID to check your lineup, free agents and injuries.'); }
+            } else renderEspnLeagues();
+        }
+
+        async function connectEspn() {
+            const raw = document.getElementById('espn-league-id').value.trim();
+            const id = (raw.match(/leagueId=(\d+)/i) || raw.match(/\d{3,}/) || [])[1] || (raw.match(/\d{3,}/) || [])[0];
+            if (!id) { espnMsg('Enter the number from your league link (leagueId=...).', true); return; }
+            const order = espn.sport === 'nba' ? ['nba', 'nfl'] : ['nfl', 'nba'];
+            espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Looking up the league...');
+            for (const sport of order) {
+                try {
+                    const ok = await openEspnLeague(sport, id, true);
+                    if (ok) { document.getElementById('espn-league-id').value = ''; return; }
+                } catch (e) {
+                    if (e.code === 'private') { espnMsg(esc(e.message), true); return; }
+                }
+            }
+            espnMsg(`Couldn't find ESPN league ${esc(id)} for this season. Check the number, and that the league is public.`, true);
+        }
+
+        // Load a league's settings and teams. Returns true when found.
+        async function openEspnLeague(sport, id, fromConnect) {
+            espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading your ESPN league...');
+            let data = null, season = null, lastErr = null;
+            for (const s of espnSeasons(sport)) {
+                try {
+                    const d = await espnFetch(`${espnBase(sport, s, id)}?view=mSettings&view=mTeam&view=mStatus`);
+                    if (d && d.settings) { data = d; season = s; break; }
+                } catch (e) { if (e.code === 'private') throw e; lastErr = e; }
+            }
+            if (!data) {
+                if (fromConnect) return false;
+                espnMsg(`Couldn't load this league${lastErr ? ': ' + esc(lastErr.message) : ''}. <button onclick="openEspnLeague('${sport}','${esc(String(id))}')" class="underline">Try again</button>`, true);
+                return false;
+            }
+            Object.assign(espn, { sport, leagueId: String(id), season, data, period: data.scoringPeriodId || data.status?.latestScoringPeriod || 1 });
+            setEspnSport(sport);
+            lsSet('rosteriq_espn_last', espnKey(sport, id));
+            const list = espnSaved();
+            let entry = list.find(l => espnKey(l.sport, l.id) === espnKey(sport, id));
+            if (!entry) { entry = { sport, id: String(id) }; list.push(entry); }
+            entry.name = data.settings.name || `League ${id}`;
+            entry.season = season;
+            espn.teamId = entry.teamId && espnTeams().some(t => t.id === entry.teamId) ? entry.teamId : null;
+            espnSave(list);
+            if (!espn.teamId) { showEspnTeamPicker(); renderEspnLeagues(); return true; }
+            await espnLoadTeam();
+            return true;
+        }
+
+        function espnTeams() {
+            const members = {};
+            (espn.data?.members || []).forEach(m => members[m.id] = m);
+            return (espn.data?.teams || []).map(t => {
+                const r = t.record?.overall || {};
+                const owner = members[t.primaryOwner || (t.owners || [])[0]];
+                return {
+                    id: t.id,
+                    name: (t.name || `${t.location || ''} ${t.nickname || ''}`).trim() || `Team ${t.id}`,
+                    abbrev: t.abbrev || '', logo: t.logo || '',
+                    owner: owner ? (owner.displayName || `${owner.firstName || ''} ${owner.lastName || ''}`.trim()) : '',
+                    record: `${r.wins || 0}-${r.losses || 0}${r.ties ? '-' + r.ties : ''}`
+                };
+            });
+        }
+
+        function showEspnTeamPicker() {
+            document.getElementById('espn-cards').classList.add('hidden');
+            const box = document.getElementById('espn-teams');
+            box.classList.remove('hidden');
+            espnMsg(`<strong class="text-slate-200">${esc(espn.data.settings.name || 'Your league')}</strong>: which team is yours?`);
+            box.innerHTML = espnTeams().map(t => `
+                <button onclick="pickEspnTeam(${t.id})" class="w-full flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-900/80 border border-slate-700 hover:border-emerald-500 text-left">
+                    <span class="w-8 h-8 shrink-0 rounded-lg bg-slate-800 overflow-hidden flex items-center justify-center text-[10px] font-black text-slate-300">${t.logo ? `<img src="${esc(t.logo)}" alt="" class="w-full h-full object-cover" onerror="this.replaceWith(document.createTextNode('${esc(t.abbrev)}'))">` : esc(t.abbrev)}</span>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-[13px] font-bold text-slate-100 truncate">${esc(t.name)}</div>
+                        <div class="text-[11px] text-slate-500 truncate">${t.owner ? esc(t.owner) + ' · ' : ''}${t.record}</div>
+                    </div>
+                    <i class="fa-solid fa-chevron-right text-slate-500 text-xs"></i>
+                </button>`).join('');
+        }
+        function espnPickTeamAgain() { if (espn.data) showEspnTeamPicker(); }
+        async function pickEspnTeam(teamId) {
+            espn.teamId = teamId;
+            const list = espnSaved();
+            const entry = list.find(l => espnKey(l.sport, l.id) === espnKey(espn.sport, espn.leagueId));
+            if (entry) { entry.teamId = teamId; espnSave(list); }
+            document.getElementById('espn-teams').classList.add('hidden');
+            await espnLoadTeam();
+        }
+
+        // ---- your roster for the current scoring period ----
+        function espnStat(stats, src, period, split) {
+            return (stats || []).find(s => s.statSourceId === src && s.scoringPeriodId === period && (split == null || s.statSplitTypeId === split)
+                && (!s.seasonId || s.seasonId === espn.season));
+        }
+        function espnPlayer(pl, extra = {}) {
+            const sport = espn.sport, stats = pl.stats || [];
+            const p = {
+                pid: pl.id, name: pl.fullName || `${pl.firstName || ''} ${pl.lastName || ''}`.trim(),
+                pos: ESPN_POS[sport][pl.defaultPositionId] || '', posId: pl.defaultPositionId,
+                eligible: pl.eligibleSlots || [], proTeamId: pl.proTeamId,
+                inj: pl.injuryStatus && !['ACTIVE', 'NORMAL'].includes(pl.injuryStatus) ? pl.injuryStatus : '',
+                owned: pl.ownership?.percentOwned, ...extra
+            };
+            const period = espn.period;
+            const actual = stats.find(s => s.statSourceId === 0 && s.scoringPeriodId === period && period > 0 && (!s.seasonId || s.seasonId === espn.season));
+            const projP = stats.find(s => s.statSourceId === 1 && s.scoringPeriodId === period && period > 0 && (!s.seasonId || s.seasonId === espn.season));
+            const seasonAct = espnStat(stats, 0, 0, 0);
+            const seasonProj = espnStat(stats, 1, 0, 0);
+            const ros = sport === 'nfl' ? espnStat(stats, 1, 0, 2) : null;
+            p.actual = actual ? Number(actual.appliedTotal) || 0 : null;
+            p.seasonAvg = seasonAct?.appliedAverage ?? null;
+            p.rosAvg = ros?.appliedAverage ?? seasonProj?.appliedAverage ?? p.seasonAvg ?? 0;
+            // NFL: ESPN's projection for this week. NBA: today's projection, or his projected per-game average
+            p.proj = projP ? Number(projP.appliedTotal) || 0 : (sport === 'nba' ? (seasonProj?.appliedAverage ?? p.seasonAvg ?? 0) : 0);
+            return p;
+        }
+        function espnGame(p, pro, period = espn.period) {
+            const t = pro[p.proTeamId];
+            const g = t?.proGamesByScoringPeriod?.[period]?.[0];
+            if (!g) return null;
+            const home = g.homeProTeamId === p.proTeamId;
+            const opp = pro[home ? g.awayProTeamId : g.homeProTeamId];
+            const now = Date.now();
+            return { date: g.date, home, opp: opp?.abbrev?.toUpperCase() || '?', started: g.date <= now, final: !!g.statsOfficial };
+        }
+        function espnTeamAbbr(p, pro) { return (pro[p.proTeamId]?.abbrev || '').toUpperCase() || 'FA'; }
+        function espnGameText(g, sport = espn.sport) {
+            if (!g) return sport === 'nfl' ? '<span class="text-rose-300">Bye week</span>' : '<span class="text-slate-500">No game today</span>';
+            const vs = `${g.home ? 'vs' : '@'} ${esc(g.opp)}`;
+            if (g.final) return `${vs} · Final`;
+            if (g.started) return `${vs} · <span class="text-amber-300">Live</span>`;
+            const d = new Date(g.date);
+            const when = sport === 'nfl'
+                ? d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+                : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            return `${vs} · ${when}`;
+        }
+        function espnInjTag(p) {
+            if (!p.inj) return '';
+            const bad = ESPN_CANT_PLAY.includes(p.inj) || p.inj === 'DOUBTFUL';
+            return ` · <span class="${bad ? 'text-rose-300' : 'text-amber-300'}">${esc(ESPN_INJ[p.inj] || p.inj)}</span>`;
+        }
+        // What a player can score this period: nothing on a bye/off day or when he's ruled out
+        function espnValue(p) {
+            if (!p.game) return 0;
+            if (ESPN_CANT_PLAY.includes(p.inj)) return 0;
+            return p.proj || 0;
+        }
+
+        async function espnLoadTeam() {
+            const sport = espn.sport;
+            document.getElementById('espn-cards').classList.remove('hidden');
+            document.getElementById('espn-teams').classList.add('hidden');
+            espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Reading your roster...');
+            try {
+                const [d, pro] = await Promise.all([
+                    espnFetch(`${espnBase()}?forTeamId=${espn.teamId}&scoringPeriodId=${espn.period}&view=mRoster&view=mStatus`),
+                    espnProTeams(sport, espn.season)
+                ]);
+                if (d.scoringPeriodId && d.scoringPeriodId !== espn.period) espn.period = d.scoringPeriodId;
+                const team = (d.teams || []).find(t => t.id === espn.teamId) || (d.teams || [])[0];
+                espn.pro = pro;
+                espn.roster = (team?.roster?.entries || []).map(e => {
+                    const ppe = e.playerPoolEntry || {};
+                    const p = espnPlayer(ppe.player || {}, { slot: e.lineupSlotId, locked: !!ppe.lineupLocked });
+                    p.game = espnGame(p, pro);
+                    p.team = espnTeamAbbr(p, pro);
+                    return p;
+                });
+                espn.loadedAt = Date.now();
+                const t = espnTeams().find(x => x.id === espn.teamId) || {};
+                const list = espnSaved();
+                const entry = list.find(l => espnKey(l.sport, l.id) === espnKey(sport, espn.leagueId));
+                if (entry) { Object.assign(entry, { teamName: t.name, record: t.record, logo: t.logo }); espnSave(list); }
+                renderEspnLeagues();
+                const badge = document.getElementById('espn-week-badge');
+                badge.textContent = sport === 'nfl' ? `Week ${espn.period}` : new Date().toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+                badge.classList.remove('hidden');
+                document.getElementById('espn-open').href = `https://fantasy.espn.com/${ESPN_SITE_PATH[sport]}/team?leagueId=${encodeURIComponent(espn.leagueId)}&teamId=${espn.teamId}&seasonId=${espn.season}`;
+                espnMsg(`${esc(t.name || 'Your team')} · ${t.record || ''} · ${espn.roster.length} players. Projections are ESPN's, in your league's scoring.`);
+                document.getElementById('espn-fix').innerHTML = '';
+                espnFixLineup();
+                ['espn-team-wrap', 'espn-fa-wrap', 'espn-tx-wrap', 'espn-ir-wrap'].forEach(w => {
+                    const el = document.getElementById(w);
+                    if (el.open) el.dispatchEvent(new Event('toggle'));
+                });
+                espnInjurySub();
+            } catch (e) {
+                espnMsg(`Couldn't read your roster: ${esc(e.message)}. <button onclick="espnLoadTeam()" class="underline">Try again</button>`, true);
+            }
+        }
+        async function espnRefresh() {
+            if (!espn.leagueId) return;
+            try {
+                const d = await espnFetch(`${espnBase()}?view=mSettings&view=mTeam&view=mStatus`);
+                if (d?.settings) { espn.data = d; espn.period = d.scoringPeriodId || espn.period; }
+            } catch (e) { /* keep the old settings */ }
+            if (espn.teamId) espnLoadTeam();
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && currentTab === 'espn' && espn.teamId && Date.now() - espn.loadedAt > 5 * 60 * 1000) espnRefresh();
+        });
+
+        // ---- Fix my lineup: best legal lineup from ESPN's projections ----
+        function espnStarterSlots() {
+            const counts = espn.data?.settings?.rosterSettings?.lineupSlotCounts || {};
+            const bench = ESPN_BENCH[espn.sport], ir = ESPN_IR[espn.sport];
+            const slots = [];
+            Object.entries(counts).forEach(([id, n]) => {
+                id = Number(id);
+                if (id === bench || id === ir || !ESPN_SLOT[espn.sport][id]) return;
+                for (let i = 0; i < n; i++) slots.push(id);
+            });
+            return slots;
+        }
+        function espnOptimize(players) {
+            const bench = ESPN_BENCH[espn.sport], ir = ESPN_IR[espn.sport];
+            const slots = espnStarterSlots();
+            const pool = players.filter(p => p.slot !== ir);
+            const assign = new Array(slots.length).fill(null);
+            const used = new Set();
+            // players whose game has started stay where they are
+            pool.filter(p => p.locked && p.slot !== bench).forEach(p => {
+                const i = slots.findIndex((s, k) => s === p.slot && !assign[k]);
+                if (i >= 0) { assign[i] = p; used.add(p.pid); }
+            });
+            const movable = pool.filter(p => !p.locked);
+            const open = slots.map((s, i) => i).filter(i => !assign[i]);
+            const width = s => movable.filter(p => p.eligible.includes(s)).length;
+            open.sort((a, b) => width(slots[a]) - width(slots[b]));
+            for (const i of open) {
+                const best = movable.filter(p => !used.has(p.pid) && p.eligible.includes(slots[i]))
+                    .sort((a, b) => espnValue(b) - espnValue(a) || (b.rosAvg || 0) - (a.rosAvg || 0))[0];
+                if (best) { assign[i] = best; used.add(best.pid); }
+            }
+            return { slots, assign };
+        }
+        function espnFixLineup() {
+            const box = document.getElementById('espn-fix');
+            if (!espn.roster.length) { box.innerHTML = ''; return; }
+            const sport = espn.sport, bench = ESPN_BENCH[sport], ir = ESPN_IR[sport];
+            const slotName = s => ESPN_SLOT[sport][s] || s;
+            const starters = espn.roster.filter(p => p.slot !== bench && p.slot !== ir);
+            const { slots, assign } = espnOptimize(espn.roster);
+            const bestSet = new Set(assign.filter(Boolean).map(p => p.pid));
+            const curSet = new Set(starters.map(p => p.pid));
+            const ins = assign.filter(p => p && !curSet.has(p.pid)).sort((a, b) => espnValue(b) - espnValue(a));
+            const outs = starters.filter(p => !bestSet.has(p.pid)).sort((a, b) => espnValue(a) - espnValue(b));
+            const curTotal = starters.reduce((a, p) => a + espnValue(p), 0);
+            const bestTotal = assign.reduce((a, p) => a + (p ? espnValue(p) : 0), 0);
+
+            // problems with the lineup as it stands
+            const problems = [];
+            starters.forEach(p => {
+                if (!p.game) problems.push(`${esc(p.name)} (${slotName(p.slot)}) ${sport === 'nfl' ? 'is on a bye' : 'has no game today'}`);
+                else if (ESPN_CANT_PLAY.includes(p.inj)) problems.push(`${esc(p.name)} (${slotName(p.slot)}) is ${esc(ESPN_INJ[p.inj] || p.inj)}`);
+                else if (p.inj === 'DOUBTFUL') problems.push(`${esc(p.name)} (${slotName(p.slot)}) is Doubtful`);
+            });
+            const filled = {};
+            starters.forEach(p => filled[p.slot] = (filled[p.slot] || 0) + 1);
+            const need = {};
+            slots.forEach(s => need[s] = (need[s] || 0) + 1);
+            Object.entries(need).forEach(([s, n]) => { const gap = n - (filled[s] || 0); if (gap > 0) problems.push(`${gap} empty ${slotName(Number(s))} slot${gap > 1 ? 's' : ''}`); });
+            const questionable = starters.filter(p => p.game && (p.inj === 'QUESTIONABLE' || p.inj === 'DAY_TO_DAY') && !p.locked);
+
+            const row = (p, tone) => `<div class="flex items-center gap-2 text-[11px]">
+                    <span class="w-12 shrink-0 text-[10px] font-bold ${tone}">${tone.includes('emerald') ? 'START' : 'BENCH'}</span>
+                    <div class="flex-1 min-w-0"><span class="font-bold text-slate-100">${esc(p.name)}</span> <span class="text-slate-500">${esc(p.team)} ${esc(p.pos)} · ${espnGameText(p.game)}${espnInjTag(p)}</span></div>
+                    <span class="shrink-0 font-black ${tone}">${espnValue(p).toFixed(1)}</span>
+                </div>`;
+            const swaps = ins.map((p, i) => {
+                const o = outs[i];
+                return `<div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 space-y-1">
+                    ${row(p, 'text-emerald-300')}
+                    ${o ? row(o, 'text-rose-300') : ''}
+                </div>`;
+            }).join('');
+            const gain = bestTotal - curTotal;
+            const when = sport === 'nfl' ? 'this week' : 'today';
+            box.innerHTML = `<div class="rounded-xl bg-slate-900/80 border ${ins.length || problems.length ? 'border-amber-800/60' : 'border-emerald-800/60'} p-3 space-y-2">
+                ${problems.length ? `<div class="text-[11px] text-amber-200 space-y-0.5">${problems.map(x => `<div><i class="fa-solid fa-triangle-exclamation mr-1"></i>${x}</div>`).join('')}</div>` : ''}
+                ${ins.length
+                    ? `<div class="flex items-center justify-between text-[12px] font-bold text-emerald-200"><span>Make ${ins.length} change${ins.length > 1 ? 's' : ''} in ESPN</span><span class="text-emerald-300">+${gain.toFixed(1)} pts</span></div>${swaps}
+                       <div class="text-[11px] text-slate-400">Projected ${when}: ${curTotal.toFixed(1)} now → <strong class="text-slate-200">${bestTotal.toFixed(1)}</strong> with these moves. Tap Open ESPN to make them.</div>`
+                    : `<div class="text-[12px] font-bold text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>Your lineup is already your best ${when} (${curTotal.toFixed(1)} projected).</div>`}
+                ${questionable.length ? `<div class="text-[11px] text-amber-300">Check before ${sport === 'nfl' ? 'kickoff' : 'tip-off'}: ${questionable.map(p => esc(p.name)).join(', ')} ${questionable.length > 1 ? 'are' : 'is'} questionable.</div>` : ''}
+                ${espn.roster.some(p => p.locked) ? `<div class="text-[11px] text-slate-500">Players whose game has started can't be moved, so they stay put.</div>` : ''}
+            </div>`;
+        }
+
+        // ---- My lineup scores ----
+        async function espnLoadScores() {
+            const body = document.getElementById('espn-team-body');
+            if (!espn.roster.length) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            const sport = espn.sport, bench = ESPN_BENCH[sport], ir = ESPN_IR[sport];
+            const order = espnStarterSlots();
+            const rank = s => { const i = order.indexOf(s); return i < 0 ? 99 : i; };
+            const starters = espn.roster.filter(p => p.slot !== bench && p.slot !== ir).sort((a, b) => rank(a.slot) - rank(b.slot));
+            const benchP = espn.roster.filter(p => p.slot === bench);
+            let matchHtml = '';
+            try {
+                const mp = espn.data?.status?.currentMatchupPeriod;
+                const d = await espnFetch(`${espnBase()}?view=mMatchupScore&scoringPeriodId=${espn.period}`);
+                const m = (d.schedule || []).find(x => x.matchupPeriodId === mp && (x.home?.teamId === espn.teamId || x.away?.teamId === espn.teamId));
+                if (m) {
+                    const me = m.home?.teamId === espn.teamId ? m.home : m.away;
+                    const them = m.home?.teamId === espn.teamId ? m.away : m.home;
+                    const teams = espnTeams();
+                    const nm = id => teams.find(t => t.id === id)?.name || 'Opponent';
+                    const pts = s => Number(s?.totalPointsLive ?? s?.totalPoints ?? 0);
+                    const proj = s => s?.totalProjectedPointsLive;
+                    matchHtml = them ? `<div class="grid grid-cols-2 gap-2 text-center">
+                        <div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800"><div class="text-[10px] text-slate-500 truncate">You</div><div class="text-lg font-black text-cyan-200">${pts(me).toFixed(1)}</div>${proj(me) != null ? `<div class="text-[10px] text-slate-500">proj ${Number(proj(me)).toFixed(1)}</div>` : ''}</div>
+                        <div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800"><div class="text-[10px] text-slate-500 truncate">${esc(nm(them.teamId))}</div><div class="text-lg font-black text-slate-200">${pts(them).toFixed(1)}</div>${proj(them) != null ? `<div class="text-[10px] text-slate-500">proj ${Number(proj(them)).toFixed(1)}</div>` : ''}</div>
+                    </div>` : `<div class="text-[11px] text-slate-400">No opponent this matchup period.</div>`;
+                }
+            } catch (e) { /* the per-player list still works */ }
+            const total = starters.reduce((a, p) => a + (p.actual || 0), 0);
+            const projTotal = starters.reduce((a, p) => a + espnValue(p), 0);
+            document.getElementById('espn-team-sub').textContent = `${total.toFixed(1)} pts so far ${sport === 'nfl' ? 'this week' : 'today'} · ${projTotal.toFixed(1)} projected`;
+            const line = p => `<div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                    <span class="w-11 shrink-0 text-[10px] font-bold text-slate-400">${esc(ESPN_SLOT[sport][p.slot] || '')}</span>
+                    <div class="flex-1 min-w-0"><div class="font-bold text-slate-100 truncate">${esc(p.name)}</div><div class="text-slate-500 truncate">${esc(p.team)} ${esc(p.pos)} · ${espnGameText(p.game)}${espnInjTag(p)}</div></div>
+                    <div class="shrink-0 text-right"><div class="font-black ${p.actual ? 'text-cyan-200' : 'text-slate-400'}">${p.actual != null ? p.actual.toFixed(1) : '–'}</div><div class="text-[10px] text-slate-500">proj ${espnValue(p).toFixed(1)}</div></div>
+                </div>`;
+            body.innerHTML = `${matchHtml}
+                <div class="text-[11px] font-bold text-slate-300 pt-1">Starters</div>${starters.map(line).join('')}
+                <details class="group/eb"><summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Bench (${benchP.length}) <i class="fa-solid fa-chevron-down text-slate-500 transition group-open/eb:rotate-180"></i></summary>
+                    <div class="mt-1.5 space-y-1">${benchP.map(line).join('')}</div></details>
+                <div class="text-[11px] text-slate-500">Scores and projections come straight from ESPN, in your league's scoring.</div>`;
+        }
+
+        // ---- Free Agents ----
+        async function espnLoadFreeAgents() {
+            const body = document.getElementById('espn-fa-body');
+            if (!espn.roster.length) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Comparing free agents to your roster...</div>`;
+            const sport = espn.sport;
+            try {
+                const filter = { players: {
+                    filterStatus: { value: ['FREEAGENT', 'WAIVERS'] },
+                    limit: 200,
+                    sortPercOwned: { sortPriority: 1, sortAsc: false },
+                    filterRanksForScoringPeriodIds: { value: [espn.period] }
+                } };
+                const [d, pro] = await Promise.all([
+                    espnFetch(`${espnBase()}?scoringPeriodId=${espn.period}&view=kona_player_info`, filter),
+                    espnProTeams(sport, espn.season)
+                ]);
+                const allowed = new Set(Object.values(ESPN_POS[sport]));
+                const fas = (d.players || []).filter(x => x.player && (x.onTeamId === 0 || x.onTeamId == null)).map(x => {
+                    const p = espnPlayer(x.player, { waivers: x.status === 'WAIVERS' });
+                    p.game = espnGame(p, pro);
+                    p.team = espnTeamAbbr(p, pro);
+                    return p;
+                }).filter(p => allowed.has(p.pos));
+                // NFL: rank by this week's projection, then rest of season. NBA: projected per game.
+                const score = p => sport === 'nfl' ? espnValue(p) + (p.rosAvg || 0) * 0.01 : (p.rosAvg || 0);
+                fas.sort((a, b) => score(b) - score(a));
+                const top = fas.slice(0, 50);
+                const metric = p => p.rosAvg || 0;
+                const margin = sport === 'nfl' ? 2 : 2.5;
+                const mine = espn.roster.filter(p => p.slot !== ESPN_IR[sport] && !p.locked).sort((a, b) => metric(a) - metric(b));
+                const used = new Set();
+                const moves = [];
+                top.forEach(fa => {
+                    if (moves.length >= 5 || ESPN_CANT_PLAY.includes(fa.inj)) return;
+                    const drop = mine.find(m => !used.has(m.pid) && m.pos === fa.pos);
+                    if (!drop) return;
+                    const g = metric(fa) - metric(drop);
+                    if (g >= margin) { moves.push({ fa, drop, gain: g }); used.add(drop.pid); }
+                });
+                const unit = sport === 'nfl' ? '/wk' : '/game';
+                const faLine = p => `${esc(p.team)} ${esc(p.pos)} · ${espnGameText(p.game)}${p.owned != null ? ` · ${p.owned.toFixed(0)}% rostered` : ''}${p.waivers ? ' · <span class="text-cyan-300">waivers</span>' : ''}${espnInjTag(p)}`;
+                const moveCard = m => `<div class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-[11px] space-y-1">
+                        <div class="flex items-center justify-between gap-2"><span class="font-bold text-emerald-200"><i class="fa-solid fa-plus mr-1"></i>Add ${esc(m.fa.name)}</span><span class="font-black text-emerald-300">+${m.gain.toFixed(1)}${unit}</span></div>
+                        <div class="text-slate-300">${faLine(m.fa)} · <strong>${metric(m.fa).toFixed(1)}</strong> proj${unit}</div>
+                        <div class="text-rose-300"><i class="fa-solid fa-minus mr-1"></i>Drop ${esc(m.drop.name)} <span class="text-slate-400">${esc(m.drop.team)} · ${metric(m.drop).toFixed(1)} proj${unit}</span></div>
+                        ${ESPN_CANT_PLAY.includes(m.drop.inj) ? `<div class="text-amber-300">${esc(m.drop.name)} may fit in an IR slot instead of being dropped.</div>` : ''}
+                    </div>`;
+                const faRow = (p, i) => `<div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                        <span class="w-5 text-right text-slate-500 font-bold">${i + 1}</span>
+                        <div class="flex-1 min-w-0"><div class="font-bold text-slate-100 truncate">${esc(p.name)}</div><div class="text-slate-500 truncate">${faLine(p)}</div></div>
+                        <div class="shrink-0 text-right">${sport === 'nfl' ? `<div class="font-black text-emerald-300">${espnValue(p).toFixed(1)}</div><div class="text-[10px] text-slate-500">ROS ${metric(p).toFixed(1)}</div>` : `<div class="font-black text-emerald-300">${metric(p).toFixed(1)}</div>`}</div>
+                    </div>`;
+                const mineRow = p => `<div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                        <div class="flex-1 min-w-0"><span class="font-bold text-slate-200">${esc(p.name)}</span> <span class="text-slate-500">${esc(p.team)} ${esc(p.pos)}${espnInjTag(p)}</span></div>
+                        <span class="shrink-0 font-black text-slate-300">${metric(p).toFixed(1)}</span>
+                    </div>`;
+                const acq = espn.data?.settings?.acquisitionSettings || {};
+                document.getElementById('espn-fa-sub').textContent = moves.length ? `${moves.length} suggested pickup${moves.length > 1 ? 's' : ''}` : 'No clear upgrades right now';
+                body.innerHTML = `
+                    <div class="text-[11px] text-slate-400">${sport === 'nfl'
+                        ? `Uses ESPN's projections in your league's scoring: this week, and rest-of-season points per week (ROS). Suggests a pickup when a free agent's ROS beats one of your players at the same position by ${margin}+.`
+                        : `Uses ESPN's projected points per game in your league's scoring. Suggests a pickup when a free agent beats one of your players at the same position by ${margin}+ per game.`}</div>
+                    ${moves.length ? `<div class="text-[11px] font-bold text-emerald-300 pt-1">Suggested moves</div>${moves.map(moveCard).join('')}` : `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>None of the top free agents beats your weakest players by ${margin}+.</div>`}
+                    <details class="group/efl">
+                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Top ${top.length} free agents <span class="text-slate-500 font-normal">${sport === 'nfl' ? 'this week' : 'proj/game'} <i class="fa-solid fa-chevron-down ml-1 transition group-open/efl:rotate-180"></i></span></summary>
+                        <div class="mt-1.5 space-y-1">${top.map(faRow).join('')}</div>
+                    </details>
+                    <details class="group/efm">
+                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] font-bold text-slate-300">Your roster, weakest first <span class="text-slate-500 font-normal">proj${unit} <i class="fa-solid fa-chevron-down ml-1 transition group-open/efm:rotate-180"></i></span></summary>
+                        <div class="mt-1.5 space-y-1">${mine.map(mineRow).join('')}</div>
+                    </details>
+                    <div class="text-[11px] text-slate-500">${acq.isUsingAcquisitionBudget ? `Your league uses FAAB ($${acq.acquisitionBudget} budget).` : `Dropped players go on waivers for ${acq.waiverHours || 'a few'} hours.`}</div>
+                    <a href="https://fantasy.espn.com/${ESPN_SITE_PATH[sport]}/players/add?leagueId=${encodeURIComponent(espn.leagueId)}" target="_blank" rel="noopener" class="block text-center py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open ESPN free agents</a>`;
+            } catch (e) {
+                body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load free agents: ${esc(e.message)}</div>`;
+            }
+        }
+
+        // ---- Injuries & IR ----
+        function espnIrInfo() {
+            const sport = espn.sport, ir = ESPN_IR[sport];
+            const slots = espn.data?.settings?.rosterSettings?.lineupSlotCounts?.[ir] || 0;
+            const onIr = espn.roster.filter(p => p.slot === ir);
+            const hurt = espn.roster.filter(p => p.inj);
+            return { slots, onIr, hurt, open: Math.max(0, slots - onIr.length) };
+        }
+        function espnInjurySub() {
+            const { hurt } = espnIrInfo();
+            document.getElementById('espn-ir-sub').textContent = hurt.length ? `${hurt.length} player${hurt.length > 1 ? 's' : ''} with an injury tag` : 'No injuries on your roster';
+        }
+        function espnLoadInjuries() {
+            const body = document.getElementById('espn-ir-body');
+            if (!espn.roster.length) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            const sport = espn.sport, bench = ESPN_BENCH[sport], ir = ESPN_IR[sport];
+            const { slots, onIr, hurt, open } = espnIrInfo();
+            const irOk = p => ['OUT', 'INJURY_RESERVE', 'SEVEN_DAY_DL', 'TEN_DAY_DL', 'FIFTEEN_DAY_DL'].includes(p.inj);
+            const advice = p => {
+                if (p.slot === ir) return irOk(p) ? `<span class="text-slate-400">On IR. Fine where he is.</span>` : `<span class="text-amber-300">No longer IR-eligible: ESPN won't allow other moves until he's off IR. Move him to your bench (drop someone if needed).</span>`;
+                const starting = p.slot !== bench;
+                const healthyOnIr = onIr.find(x => !irOk(x));
+                if (irOk(p)) return open ? `<span class="text-emerald-300">Move him to IR to open a roster spot${starting ? ', and start someone else' : ''}.</span>`
+                    : healthyOnIr ? `<span class="text-amber-300">${starting ? 'Bench him. ' : ''}Swap him onto IR for ${esc(healthyOnIr.name)}, who no longer needs the spot.</span>`
+                    : `<span class="text-rose-300">${starting ? 'Bench him. ' : ''}${slots ? 'IR is full.' : 'Your league has no IR slot.'}</span>`;
+                if (ESPN_CANT_PLAY.includes(p.inj)) return `<span class="text-rose-300">${starting ? 'Bench him' : 'Keep him benched'}.</span>`;
+                if (p.inj === 'DOUBTFUL') return `<span class="text-rose-300">${starting ? 'Unlikely to play: start someone else if you can.' : 'Unlikely to play.'}</span>`;
+                return `<span class="text-amber-300">${starting ? `Check his status before ${sport === 'nfl' ? 'kickoff' : 'tip-off'}.` : 'Game-time decision.'}</span>`;
+            };
+            const list = [...new Map([...onIr, ...hurt].map(p => [p.pid, p])).values()];
+            body.innerHTML = `
+                <div class="text-[11px] text-slate-400">IR slots: ${onIr.length}/${slots} used${slots ? ` · ESPN lets players listed Out or IR go there` : ''}.</div>
+                ${list.length ? list.map(p => `<div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px] space-y-0.5">
+                        <div class="flex items-center justify-between gap-2"><span class="font-bold text-slate-100 truncate">${esc(p.name)} <span class="font-normal text-slate-500">${esc(p.team)} ${esc(p.pos)} · ${esc(ESPN_SLOT[sport][p.slot] || '')}</span></span><span class="shrink-0 font-bold ${ESPN_CANT_PLAY.includes(p.inj) || p.inj === 'DOUBTFUL' ? 'text-rose-300' : p.inj ? 'text-amber-300' : 'text-emerald-300'}">${esc(ESPN_INJ[p.inj] || p.inj || 'Healthy')}</span></div>
+                        <div>${advice(p)}</div>
+                    </div>`).join('') : `<div class="text-[11px] text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>Nobody on your roster has an injury tag.</div>`}`;
+        }
+
+        // ---- Transactions: one day at a time ----
+        function espnSetTxDay(n) { espn.txDay = n; espnLoadTransactions(); }
+        async function espnLoadTransactions() {
+            const body = document.getElementById('espn-tx-body');
+            if (!espn.teamId) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading league transactions...</div>`;
+            const sport = espn.sport;
+            try {
+                const periods = sport === 'nba' ? [espn.period, espn.period - 1].filter(x => x > 0) : [espn.period];
+                const results = await Promise.all(periods.map(p => espnFetch(`${espnBase()}?scoringPeriodId=${p}&view=mTransactions2`).catch(() => ({}))));
+                const seen = new Set();
+                const txs = [];
+                results.forEach(r => (r.transactions || []).forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); txs.push(t); } }));
+                const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - espn.txDay);
+                const end = new Date(start); end.setDate(end.getDate() + 1);
+                const when = t => t.processDate || t.proposedDate || 0;
+                const onDay = t => when(t) >= start.getTime() && when(t) < end.getTime();
+                const real = t => !['DRAFT', 'ROSTER', 'FUTURE_ROSTER'].includes(t.type);
+                const mine = txs.filter(t => t.teamId === espn.teamId && onDay(t) && real(t) && (t.status === 'EXECUTED' || t.type === 'WAIVER'))
+                    .sort((a, b) => when(b) - when(a));
+                const drops = [];
+                txs.filter(t => t.status === 'EXECUTED' && onDay(t) && real(t) && t.teamId !== espn.teamId).forEach(t =>
+                    (t.items || []).forEach(it => { if (it.type === 'DROP') drops.push({ pid: it.playerId, teamId: t.teamId, at: when(t) }); }));
+                // look up names, and whether the dropped players are still free
+                const ids = [...new Set([...mine.flatMap(t => (t.items || []).map(i => i.playerId)), ...drops.map(x => x.pid)])];
+                const info = {};
+                if (ids.length) {
+                    const [d, pro] = await Promise.all([
+                        espnFetch(`${espnBase()}?scoringPeriodId=${espn.period}&view=kona_player_info`, { players: { filterIds: { value: ids }, limit: ids.length } }),
+                        espnProTeams(sport, espn.season)
+                    ]);
+                    (d.players || []).forEach(x => {
+                        if (!x.player) return;
+                        const p = espnPlayer(x.player);
+                        p.team = espnTeamAbbr(p, pro);
+                        p.onTeamId = x.onTeamId;
+                        info[x.id ?? x.player.id] = p;
+                    });
+                }
+                const teams = espnTeams();
+                const tName = id => teams.find(t => t.id === id)?.name || 'another team';
+                const who = id => { const p = info[id]; return p ? `<strong class="text-slate-100">${esc(p.name)}</strong> <span class="text-slate-500">${esc(p.team)} ${esc(p.pos)}</span>` : `Player ${id}`; };
+                const statusTxt = t => t.status === 'EXECUTED' ? '<span class="text-emerald-300">Went through</span>'
+                    : t.status === 'PENDING' ? '<span class="text-cyan-300">Pending</span>'
+                    : t.status === 'CANCELED' ? '<span class="text-slate-400">Canceled</span>'
+                    : '<span class="text-rose-300">Didn\'t go through</span>';
+                const typeTxt = t => t.type === 'WAIVER' ? 'Waiver claim' : t.type === 'FREEAGENT' ? 'Free agent' : t.type.startsWith('TRADE') ? 'Trade' : t.type;
+                const time = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                const mineHtml = mine.map(t => `<div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px] space-y-0.5">
+                        <div class="flex items-center justify-between gap-2"><span class="text-slate-400">${typeTxt(t)}${t.bidAmount ? ` · $${t.bidAmount}` : ''} · ${time(when(t))}</span>${statusTxt(t)}</div>
+                        ${(t.items || []).filter(i => i.type === 'ADD' || i.type === 'DROP').map(i => `<div>${i.type === 'ADD' ? '<i class="fa-solid fa-plus text-emerald-300 mr-1"></i>Add' : '<i class="fa-solid fa-minus text-rose-300 mr-1"></i>Drop'} ${who(i.playerId)}</div>`).join('')}
+                    </div>`).join('');
+                const avail = drops.filter(x => !info[x.pid] || !info[x.pid].onTeamId);
+                const availHtml = avail.map(x => `<div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                        <div class="flex-1 min-w-0 truncate">${who(x.pid)}</div>
+                        <span class="shrink-0 text-slate-500">by ${esc(tName(x.teamId))} · ${time(x.at)}</span>
+                    </div>`).join('');
+                const dayBtn = (n, label) => `<button onclick="espnSetTxDay(${n})" class="px-2.5 py-1 rounded-md font-bold ${espn.txDay === n ? 'bg-emerald-500 text-slate-950' : 'text-slate-400'}">${label}</button>`;
+                body.innerHTML = `
+                    <div class="flex justify-end"><div class="flex p-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px]">${dayBtn(0, 'Today')}${dayBtn(1, 'Yesterday')}</div></div>
+                    <div class="text-[11px] font-bold text-slate-300">Your moves</div>
+                    ${mineHtml || `<div class="text-[11px] text-slate-500">No moves or waiver claims ${espn.txDay ? 'yesterday' : 'today'}.</div>`}
+                    <div class="text-[11px] font-bold text-slate-300 pt-1">Newly available (dropped by other teams)</div>
+                    ${availHtml || `<div class="text-[11px] text-slate-500">No drops by other teams ${espn.txDay ? 'yesterday' : 'today'}.</div>`}
+                    <div class="text-[11px] text-slate-500">${sport === 'nfl' ? `Shows week ${espn.period}'s transactions.` : 'Shows the last two days of transactions.'}</div>`;
+            } catch (e) {
+                body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load transactions: ${esc(e.message)}</div>`;
+            }
         }
     </script>
 </body>
