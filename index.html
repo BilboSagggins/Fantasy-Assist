@@ -1875,6 +1875,7 @@
             league.players.forEach(p => {
                 p.lockInfo = null;
                 const c = countedPts[p.pid];
+                p.counted = c != null ? Number(c) : null;
                 const played = (p.games || []).filter(g => g.done && !g.dnp);
                 if (c == null || !played.length) return;
                 const close = g => Math.abs(g.actual - Number(c)) < 0.15;
@@ -1883,6 +1884,7 @@
                 if (k >= 0 && k < played.length - 1 && !close(last)) p.lockInfo = { status: 'locked', game: played[k] };
                 else if (k === played.length - 1 && Number(c) !== 0) p.lockInfo = { status: 'maybe', game: last };
             });
+            applyLocks();
 
             // Lineup: most restrictive slots first, best expected locked score
             const positions = (league.info.roster_positions || []).map((s, i) => ({ s, i })).filter(x => NBA_SLOTS[x.s]);
@@ -1944,6 +1946,28 @@
             const playerCard = (sl) => {
                 const p = sl.p;
                 const xb = sl.extra ? p.extraBar : null; // "beat the best lineup" bar for your extra starters
+                if (isLocked(p)) {
+                    const g = p.lockedGame;
+                    return `
+                <div class="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/40 space-y-2 min-w-0">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-[11px] font-extrabold text-emerald-400 shrink-0">${esc(sl.slot)}</span>
+                        ${avatar(p)}
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-white truncate">${esc(p.name)}</div>
+                            <div class="text-[11px] text-slate-400">${esc(p.team)} ${esc((p.fpos || [p.pos]).join('/'))}</div>
+                        </div>
+                        <div class="text-right shrink-0">
+                            <div class="text-[9px] uppercase font-bold text-emerald-300"><i class="fa-solid fa-lock mr-0.5"></i>Locked</div>
+                            <div class="text-sm font-black text-emerald-400">${p.lockedPts.toFixed(1)}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 text-[11px] p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                        <span class="font-bold text-slate-200">${g ? `${esc(day(g.date))} \u00b7 ${g.home ? 'vs' : '@'} ${esc(g.opp)}` : 'Locked game'}</span>
+                        <span class="text-white font-bold"><i class="fa-solid fa-lock text-emerald-400 mr-1"></i>${p.lockedPts.toFixed(1)} pts</span>
+                    </div>
+                </div>`;
+                }
                 if (!p) return `<div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-[11px] text-rose-300"><span class="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-extrabold text-emerald-400 mr-2">${esc(sl.slot)}</span>No healthy eligible player.</div>`;
                 const steps = p.remPlan.steps;
                 return `
@@ -2513,6 +2537,19 @@
             const o = league.lockOverrides?.[p.pid];
             return o != null ? o : p.lockInfo?.status === 'locked';
         }
+        // A locked player's week is settled: his locked game is his score
+        function applyLocks() {
+            league.players.forEach(p => {
+                if (!isLocked(p)) { p.lockedGame = null; return; }
+                const played = (p.games || []).filter(g => g.done && !g.dnp);
+                p.lockedGame = p.lockInfo?.game
+                    || played.find(g => p.counted != null && Math.abs(g.actual - p.counted) < 0.15)
+                    || played[played.length - 1] || null;
+                p.lockedPts = p.counted ?? p.lockedGame?.actual ?? 0;
+                if (p.value != null) p.value = p.lockedPts;
+            });
+        }
+
         function toggleLock(pid) {
             const p = league.players.find(x => x.pid === pid);
             if (!p) return;
@@ -2521,6 +2558,7 @@
             lsSet(lockKey(), JSON.stringify(league.lockOverrides));
             league.fixes = computeLineupFixes();
             renderLineupFixes();
+            if (league.sport === 'nba' && league.plan?.sport === 'nba') { applyLocks(); renderNbaPlan(); }
         }
 
         function computeLineupFixes() {
