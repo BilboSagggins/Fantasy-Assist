@@ -583,6 +583,10 @@
             else updateApiStatus(`Rosters ready (${playerCache[sport].length} ${sport.toUpperCase()} players${sport === 'nfl' ? ' & D/ST' : ''})`, 'green');
         }
 
+        // How much each projection leans on Sleeper's own projection (the rest is the player's recent scoring)
+        const SLEEPER_WEIGHT = 0.75;
+        const WEIGHT_NOTE = `Proj = ${Math.round(SLEEPER_WEIGHT * 100)}% Sleeper's projection + ${Math.round((1 - SLEEPER_WEIGHT) * 100)}% his recent scoring, in your league's scoring.`;
+
         // ---------- Sources ----------
         // Sleeper is the primary source: its API allows requests from any page,
         // including a file opened directly on a phone. ESPN is a backup.
@@ -1772,7 +1776,7 @@
                     const opp = home ? nbaTeam(g.away) : nbaTeam(g.home);
                     const pr = pj.find(x => x.date === g.date);
                     const sp = pr?.stats ? (nbaLeagueScoring ? leaguePoints(pr.stats, nbaLeagueScoring) : calculateNBAPoints(sleeperNbaStats(pr.stats))) : null;
-                    let mu = sp != null && recent != null ? 0.6 * sp + 0.4 * recent : (sp ?? recent ?? 0);
+                    let mu = sp != null && recent != null ? SLEEPER_WEIGHT * sp + (1 - SLEEPER_WEIGHT) * recent : (sp ?? recent ?? 0);
                     const done = g.status === 'complete';
                     let actual = null, dnp = false;
                     if (done) {
@@ -1951,7 +1955,7 @@
                                     <div class="font-bold text-slate-200">${esc(day(g.date))} · ${g.home ? 'vs' : '@'} ${esc(g.opp)}</div>
                                     <div class="text-slate-300">${advice}</div>
                                 </div>
-                                ${g.done ? '' : `<div class="text-right shrink-0"><div class="font-extrabold text-emerald-400">${g.mu.toFixed(1)}</div><div class="text-[9px] text-slate-500">proj</div></div>`}
+                                ${g.done ? '' : `<div class="text-right shrink-0"><div class="font-extrabold text-emerald-400">${g.mu.toFixed(1)}</div><div class="text-[9px] text-slate-500">proj</div>${g.sleeperProj != null ? `<div class="text-[10px] text-slate-400 mt-0.5">Sleeper ${g.sleeperProj.toFixed(1)}</div>` : ''}</div>`}
                             </li>`;
                         }).join('')}
                     </ol>
@@ -1963,6 +1967,7 @@
                     <div class="font-bold text-emerald-300"><i class="fa-solid fa-list-check mr-1"></i>Start these this week</div>
                     <div>${lineup.filter(sl => sl.p).map(sl => `<span class="inline-block mr-2">${esc(sl.slot)}: <strong>${esc(sl.p.name)}</strong> <span class="text-emerald-300/70">(${sl.p.gamesLeft} left)</span></span>`).join('')}</div>
                     <div class="text-emerald-200/80">Ranked by expected locked score, which counts games left as well as projection. Expected total: <strong>${total.toFixed(1)} pts</strong></div>
+                    <div class="text-emerald-200/70">${esc(WEIGHT_NOTE)}</div>
                 </div>
                 ${lineup.map(playerCard).join('')}
                 ${(league.plan.extra || []).length ? `
@@ -2441,12 +2446,14 @@
                 const on = grp.selected === oi;
                 const elsewhere = pickedElsewhere(gi, p.pid);
                 const tonightGame = grp.kind === 'tonight' ? (p.games || []).find(g => g.date === grp.date) : null;
+                const sg = nba ? (p.games || []).find(g => g.date === (grp.date || o.date)) : null;
+                const sTxt = sg && sg.sleeperProj != null ? ` <span class="text-slate-500">(Sleeper ${sg.sleeperProj.toFixed(1)})</span>` : '';
                 const detail = grp.kind === 'tonight'
-                    ? `plays ${grp.isToday ? 'tonight' : esc(day(grp.date))} ${tonightGame ? `${tonightGame.home ? 'vs' : '@'} ${esc(tonightGame.opp)}` : ''} · proj <strong class="text-emerald-400">${o.score.toFixed(1)}</strong> · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left`
+                    ? `plays ${grp.isToday ? 'tonight' : esc(day(grp.date))} ${tonightGame ? `${tonightGame.home ? 'vs' : '@'} ${esc(tonightGame.opp)}` : ''} · proj <strong class="text-emerald-400">${o.score.toFixed(1)}</strong>${sTxt} · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left`
                     : grp.kind === 'upgrade'
-                    ? `proj ${o.score.toFixed(1)} on ${esc(day(grp.date))} <strong class="text-emerald-400">+${o.gain.toFixed(1)}</strong>${nba ? ` · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left` : ''}`
+                    ? `proj ${o.score.toFixed(1)}${sTxt} on ${esc(day(grp.date))} <strong class="text-emerald-400">+${o.gain.toFixed(1)}</strong>${nba ? ` · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left` : ''}`
                     : nba && o.dayLabel
-                    ? `plays ${esc(o.dayLabel.toLowerCase())} (${esc(day(o.date))}) · proj <strong class="text-emerald-400">${o.score.toFixed(1)}</strong> · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left`
+                    ? `plays ${esc(o.dayLabel.toLowerCase())} (${esc(day(o.date))}) · proj <strong class="text-emerald-400">${o.score.toFixed(1)}</strong>${sTxt} · ${p.gamesLeft} game${p.gamesLeft === 1 ? '' : 's'} left`
                     : `${esc(gamesInfo(p))} · ${nba ? 'exp' : 'proj'} <strong class="text-emerald-400">${o.score.toFixed(1)}</strong>`;
                 const warn = grp.kind === 'upgrade' && nba && grp.out.gamesLeft > p.gamesLeft
                     ? `<div class="text-amber-300/90">${esc(grp.out.name)} has ${grp.out.gamesLeft} games left vs ${p.gamesLeft}.</div>` : '';
@@ -2568,7 +2575,7 @@
                     </summary>
                     <div class="px-3 pb-3 space-y-1.5">
                         ${locksBlock}
-                        <div class="text-[11px] text-slate-500">${nba ? 'Only today\'s and tomorrow\'s games, the lineups you can still change. ' : ''}Tap a slot to see every option. Checked swaps are the ones to make.</div>
+                        <div class="text-[11px] text-slate-500">${nba ? 'Only today\'s and tomorrow\'s games, the lineups you can still change. ' : ''}${esc(WEIGHT_NOTE)} Tap a slot to see every option. Checked swaps are the ones to make.</div>
                         ${section(`Lineup problems`, 'text-amber-300', 'fa-triangle-exclamation', problems)}
                         ${nba ? daySections() : `
                         ${section(`Play ${esc(tonightWord)} (starter has no game)`, 'text-violet-300', 'fa-moon', tonight)}
@@ -2869,7 +2876,7 @@
                 const sp = pr?.stats ? (leagueScoring ? leaguePoints(pr.stats) : num(pr.stats.pts_ppr)) : null;
                 p.sleeperProj = sp;
                 p.ownProj = own;
-                let mu = sp != null && own != null ? (sp + own) / 2 : (sp ?? own ?? 0);
+                let mu = sp != null && own != null ? SLEEPER_WEIGHT * sp + (1 - SLEEPER_WEIGHT) * own : (sp ?? own ?? 0);
                 if (/^doubtful/i.test(p.injury)) mu *= 0.3;
                 p.mu = Number(mu.toFixed(1));
 
@@ -3045,7 +3052,7 @@
                                     ${avatar(p)}
                                     <div class="flex-1 min-w-0">
                                         <div class="text-sm font-bold text-white truncate">${esc(p.name)} <span class="text-[11px] font-semibold text-slate-400">${esc(p.team)} ${esc(p.pos)}</span>${p.injury ? ` <span class="text-[10px] font-bold text-rose-400">${esc(p.injury)}</span>` : ''}</div>
-                                        <div class="text-[11px] text-slate-400">${esc(kickLabel(p))}${p.known ? '' : ` · proj <strong class="text-emerald-400">${p.mu.toFixed(1)}</strong>`}${!p.known && p.sleeperProj != null && p.ownProj != null ? ` <span class="text-slate-500">(Sleeper ${p.sleeperProj.toFixed(1)} / RosterIQ ${p.ownProj.toFixed(1)})</span>` : ''}${p.actual != null && p.status !== 'pre_game' ? ` · <strong class="text-white">${p.actual.toFixed(1)} pts</strong>` : ''}</div>
+                                        <div class="text-[11px] text-slate-400">${esc(kickLabel(p))}${p.known ? '' : ` · proj <strong class="text-emerald-400">${p.mu.toFixed(1)}</strong>`}${!p.known && p.sleeperProj != null && p.ownProj != null ? ` <span class="text-slate-500">(Sleeper ${p.sleeperProj.toFixed(1)} · ${Math.round(SLEEPER_WEIGHT * 100)}/${Math.round((1 - SLEEPER_WEIGHT) * 100)} with recent ${p.ownProj.toFixed(1)})</span>` : ''}${p.actual != null && p.status !== 'pre_game' ? ` · <strong class="text-white">${p.actual.toFixed(1)} pts</strong>` : ''}</div>
                                         <div class="text-[11px] text-slate-300 mt-0.5">${advice}</div>
                                     </div>
                                     ${compareBtn(p)}
