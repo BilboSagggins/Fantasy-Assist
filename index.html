@@ -250,11 +250,16 @@
                     <div id="ir-body" class="px-3 pb-3 space-y-1.5"></div>
                 </details>
             </div>
-            <details id="league-plan-wrap" class="hidden group">
-                <summary class="cursor-pointer list-none text-[11px] font-semibold text-slate-500 hover:text-slate-300 select-none">
-                    <i class="fa-solid fa-chevron-right mr-1 transition group-open:rotate-90"></i>Weekly lock plan (game-by-game)
+            <details id="league-plan-wrap" class="hidden group/plan rounded-xl bg-slate-900/80 border border-slate-700">
+                <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                    <i class="fa-solid fa-lock text-emerald-300"></i>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-bold text-slate-100">Weekly lock plan</div>
+                        <div id="plan-sub" class="text-[11px] text-slate-400">Lock-or-wait advice for every game</div>
+                    </div>
+                    <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/plan:rotate-180"></i>
                 </summary>
-                <div id="league-plan" class="space-y-3 mt-3"></div>
+                <div id="league-plan" class="px-3 pb-3 space-y-3"></div>
             </details>
             <details id="reminder-wrap" class="group" ontoggle="if (this.open) renderReminder()">
                 <summary class="cursor-pointer list-none text-[11px] font-semibold text-slate-500 hover:text-slate-300 select-none">
@@ -1931,6 +1936,7 @@
             const { lineup, bench } = league.plan;
             if (!lineup.length) { el.innerHTML = `<div class="text-xs text-slate-400">No lineup slots found for this league.</div>`; return; }
             const total = lineup.reduce((a, sl) => a + (sl.p ? sl.p.value : 0), 0);
+            document.getElementById('plan-sub').textContent = `Lock-or-wait advice for every game \u00b7 expected ${total.toFixed(1)} pts`;
             const avatar = p => `<img src="${esc(p.avatar || '')}" loading="lazy" class="w-10 h-10 rounded-lg bg-slate-950 object-cover border border-slate-700 shrink-0" onerror="this.onerror=null;this.src='https://placehold.co/80x80/0f172a/34d399?text=${encodeURIComponent(p.pos || '?')}'">`;
             const tone = { lock: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200', swap: 'bg-amber-500/15 border-amber-500/40 text-amber-200', final: 'bg-slate-800 border-slate-700 text-slate-300' };
             const day = d => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' });
@@ -2660,8 +2666,8 @@
                 box.innerHTML = `
                     <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 space-y-2">
                         <div><i class="fa-solid fa-circle-check mr-1"></i>${nba ? 'Nothing to change for today or tomorrow: every open slot is covered and no bench player who plays then projects higher.' : 'Every starter has a game this week, and no bench player playing the same day projects higher. Nothing to swap.'}</div>
-                        <div class="flex gap-2">${againBtn}</div>
                     </div>`;
+                box.insertAdjacentHTML('afterbegin', `<div class="flex gap-2 mb-2">${openBtn}${againBtn}</div>`);
                 return;
             }
             const day = d => fmtDate(`${d}T12:00:00`);
@@ -2799,6 +2805,7 @@
             ].filter(Boolean).join(' · ');
 
             box.innerHTML = `
+                <div class="flex gap-2 mb-2">${openBtn}${againBtn}</div>
                 <details ${league.fixPanelOpen ? 'open' : ''} ontoggle="league.fixPanelOpen = this.open" class="group/panel rounded-xl bg-slate-900/80 border ${problems.length ? 'border-amber-800/60' : 'border-slate-700'}">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid ${problems.length ? 'fa-triangle-exclamation text-amber-300' : 'fa-circle-check text-emerald-300'}"></i>
@@ -2817,8 +2824,7 @@
                         ${section(`Upgrades (same day, higher projection)`, 'text-cyan-300', 'fa-arrow-trend-up', upgrades)}`}
                         ${nba && !problems.length && !tonight.length && !upgrades.length ? `<div class="text-[11px] text-emerald-300">Nothing to change for today or tomorrow.</div>` : ''}
                     </div>
-                </details>
-                <div class="flex gap-2 mt-2">${openBtn}${againBtn}</div>`;
+                </details>`;
         }
 
         function setFixOpen(key, open) {
