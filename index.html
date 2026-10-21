@@ -762,7 +762,7 @@
 
         // How much each projection leans on Sleeper's own projection (the rest is the player's recent scoring)
         const SLEEPER_WEIGHT = 0.75;
-        const WEIGHT_NOTE = `Proj = ${Math.round(SLEEPER_WEIGHT * 100)}% Sleeper's projection + ${Math.round((1 - SLEEPER_WEIGHT) * 100)}% his recent scoring, in your league's scoring.`;
+        const WEIGHT_NOTE = `Proj = ${Math.round(SLEEPER_WEIGHT * 100)}% Sleeper's projection + ${Math.round((1 - SLEEPER_WEIGHT) * 100)}% his recent scoring, in your league's scoring. When his role just changed (a teammate out or back, a new QB), "recent" uses only his games in the same situation, or Sleeper alone if there aren't 2.`;
 
         // ---------- Sources ----------
         // Sleeper is the primary source: its API allows requests from any page,
@@ -842,7 +842,8 @@
                             name: p.full_name || (pos0 === 'DEF' ? `${p.first_name || ''} ${p.last_name || ''} D/ST`.trim() : `${p.first_name || ''} ${p.last_name || ''}`.trim()),
                             pos: pos0 === 'DEF' ? 'D/ST' : pos0 === 'PK' ? 'K' : pos0,
                             fpos: (Array.isArray(p.fantasy_positions) && p.fantasy_positions.length ? p.fantasy_positions : [pos0]).map(x => String(x).toUpperCase()),
-                            team: p.team || '', injury: p.injury_status || '', body: p.injury_body_part || '', notes: p.injury_notes || '', status: p.status || ''
+                            team: p.team || '', injury: p.injury_status || '', body: p.injury_body_part || '', notes: p.injury_notes || '', status: p.status || '',
+                            depthPos: p.depth_chart_position || '', depthOrder: p.depth_chart_order ?? null
                         };
                     }
                     if (!p || !p.full_name) continue;
@@ -1526,7 +1527,7 @@
                 if (['QB', 'RB', 'WR', 'TE'].includes(player.pos) && games.length) {
                     try { lw = await getLeagueWeekTable(s); } catch (e) { /* shares unavailable */ }
                 }
-                return games.slice(0, 5).map(g => {
+                return games.map(g => {
                     const team = g.team || player.team;
                     const game = sched.find(x => Number(x.week) === Number(g.week) && (sameTeam(team, x.home) || sameTeam(team, x.away)));
                     const opp = g.opponent || (game ? (sameTeam(team, game.home) ? game.away : game.home) : 'OPP');
@@ -1543,16 +1544,16 @@
                         };
                     }
                     return {
-                        when: `Wk ${g.week}`, opponent: `${prefix} ${opp}`, result: '',
+                        when: `Wk ${g.week}`, week: Number(g.week), key: String(g.week), opponent: `${prefix} ${opp}`, result: '',
                         stats, raw, usage, pts: logPoints(stats, raw, player.pos)
                     };
                 });
             };
 
-            let logs = await load(season);
+            let all = await load(season);
             let used = season;
-            if (!logs.length) { logs = await load(season - 1); used = season - 1; }
-            return { logs, usedSeason: used, isCurrent: used === season };
+            if (!all.length) { all = await load(season - 1); used = season - 1; }
+            return { logs: all.slice(0, 5), allLogs: all, usedSeason: used, isCurrent: used === season };
         }
 
         // ---------- Game logs: ESPN (backup) ----------
@@ -1747,9 +1748,146 @@
                         ${f.usage && f.usage.length ? `<div><i class="fa-solid fa-gauge-high mr-1 text-cyan-400"></i>Workload: ${esc(f.usage.join(' · '))}</div>` : ''}
                         ${(f.role || []).map(r => `<div><i class="fa-solid ${r.trend === 'rising' ? 'fa-arrow-up text-emerald-400' : r.trend === 'falling' ? 'fa-arrow-down text-rose-400' : 'fa-user-clock text-cyan-400'} mr-1"></i>${esc(r.text)}</div>`).join('')}
                         ${f.tdShare != null ? `<div><i class="fa-solid fa-football mr-1 text-amber-400"></i>${f.tdShare}% of points from TDs${f.tdShare >= 45 ? ' — boom/bust profile' : ''}</div>` : ''}
+                        ${roleNotesHtml(slot.role)}
                     </div>
                 </div>`;
         }
+
+        // ---------- Role changes: injuries ahead of him, and who's playing QB ----------
+        // A player's recent games may have come in a different situation than his next one
+        // (a starter in front of him now out, or his starting QB back). When that happens, his
+        // "recent scoring" is rebuilt from the games he played in the same situation.
+        const playedCache = {};
+        function playedGames(sport, pid, season) {
+            const k = `${sport}:${pid}:${season}`;
+            if (!playedCache[k]) {
+                playedCache[k] = getJSON(`${SLEEPER_API}/stats/${sport}/player/${pid}?season_type=regular&season=${season}&grouping=week`)
+                    .then(d => {
+                        const out = {};
+                        Object.values(d || {}).flatMap(v => Array.isArray(v) ? v : (v ? [v] : [])).forEach(g => {
+                            if (g && g.stats && playedGame(g.stats)) out[sport === 'nfl' ? String(g.week) : g.date] = g.stats;
+                        });
+                        return out;
+                    })
+                    .catch(() => { delete playedCache[k]; return {}; });
+            }
+            return playedCache[k];
+        }
+        const statusWord = x => { const i = String(x?.injury || ''); return /^ir|injured reserve/i.test(i) ? 'on IR' : /^pup/i.test(i) ? 'on PUP' : /^sus/i.test(i) ? 'suspended' : i.toLowerCase(); };
+        const sidelined = x => OUT_STATUS.test(x?.injury || '') || /^doubtful/i.test(x?.injury || '');
+        const avgOf = arr => arr.length ? arr.reduce((a, g) => a + g.pts, 0) / arr.length : null;
+        const gWord = n => `${n} game${n === 1 ? '' : 's'}`;
+
+        async function roleContext(slot) {
+            const sport = slot.sport, raw = rawPlayers[sport] || {};
+            const me = raw[String(slot.sleeperId)];
+            if (!me || !slot.team || slot.pos === 'D/ST' || !slot.isCurrentSeason) return null;
+            const season = sport === 'nfl' ? await sleeperSeason() : await sleeperSeasonFor('nba');
+            const games = (slot.allLogs || slot.gameLogs || []).filter(g => g.key != null && (sport === 'nfl' || g.key >= `${season}-10-01`));
+            if (!games.length) return null;
+            const recent = games.slice(0, 3);
+            const mates = Object.values(raw).filter(x => x.team === slot.team && x.pid !== me.pid);
+            const ctx = { notes: [], changed: false, adjAvg: null, adjN: 0 };
+            const first = slot.name.split(' ')[0] === slot.name ? slot.name : lastName(slot.name);
+
+            // Use his games in the upcoming situation, if he has at least 2 of them
+            const sets = [];
+            const apply = (matching, text, dir) => {
+                ctx.changed = true;
+                sets.push(new Set(matching.map(g => g.key)));
+                ctx.notes.push({ text, tone: 'change', dir }); // dir: 'up' = bigger role, 'down' = smaller
+            };
+
+            if (sport === 'nfl') {
+                // 1) Who's throwing to him (RB/WR/TE)
+                if (['RB', 'WR', 'TE'].includes(slot.pos)) {
+                    const qbs = mates.filter(x => x.pos === 'QB').sort((a, b) => (a.depthOrder ?? 9) - (b.depthOrder ?? 9)).slice(0, 3);
+                    if (qbs.length) {
+                        const qbGames = await Promise.all(qbs.map(q => playedGames('nfl', q.pid, season)));
+                        const starterOf = key => {
+                            let best = null, att = 0;
+                            qbs.forEach((q, i) => { const a = num(qbGames[i][key]?.pass_att); if (a > att) { att = a; best = q; } });
+                            return att >= 10 ? best : null;
+                        };
+                        const next = qbs.find(q => !sidelined(q));
+                        const recentQbs = recent.map(g => starterOf(g.key)).filter(Boolean);
+                        const usual = recentQbs.length ? recentQbs.sort((a, b) => recentQbs.filter(x => x === b).length - recentQbs.filter(x => x === a).length)[0] : null;
+                        const withNext = next ? games.filter(g => starterOf(g.key) === next) : [];
+                        const withUsual = usual ? games.filter(g => starterOf(g.key) === usual) : [];
+                        const sameEither = withNext.length >= 2 && withUsual.length >= 2 && Math.abs(avgOf(withNext) - avgOf(withUsual)) < Math.max(1.5, 0.15 * avgOf(withUsual));
+                        if (next && usual && next !== usual && sameEither) {
+                            ctx.notes.push({ text: `${next.name} is back at QB; ${first} has scored about the same with either QB (${avgOf(withNext).toFixed(1)} vs ${avgOf(withUsual).toFixed(1)}).`, tone: 'info' });
+                        } else if (next && usual && next !== usual) {
+                            const startedBefore = withNext.length > 0;
+                            const split = withNext.length >= 2
+                                ? `${first} averaged ${avgOf(withNext).toFixed(1)} with him (${gWord(withNext.length)}) vs ${avgOf(withUsual).toFixed(1)} with ${usual.name} (${gWord(withUsual.length)}).`
+                                : `${first} has ${withNext.length ? 'only 1 game' : 'no games'} with him this season, so this leans on Sleeper's projection.`;
+                            apply(withNext, startedBefore
+                                ? `${next.name} is back at QB after ${usual.name} started his last ${gWord(recentQbs.filter(x => x === usual).length)}. ${split}`
+                                : `${next.name} is expected to start at QB${sidelined(usual) ? ` with ${usual.name} ${statusWord(usual)}` : ''}. ${split}`,
+                                withNext.length >= 2 && withUsual.length ? (avgOf(withNext) >= avgOf(withUsual) ? 'up' : 'down') : null);
+                        } else if (next && sidelined(qbs[0]) && qbs[0] !== next) {
+                            ctx.notes.push({ text: `${qbs[0].name} is still ${statusWord(qbs[0])}; ${next.name} keeps starting at QB.`, tone: 'info' });
+                        }
+                    }
+                }
+                // 2) Teammates ahead of him on the depth chart
+                if (me.depthPos && me.depthOrder > 1) {
+                    const ahead = mates.filter(x => x.depthPos === me.depthPos && x.depthOrder != null && x.depthOrder < me.depthOrder)
+                        .sort((a, b) => a.depthOrder - b.depthOrder).slice(0, 2);
+                    for (const t of ahead) {
+                        const tg = await playedGames('nfl', t.pid, season);
+                        const missedRecent = recent.filter(g => !tg[g.key]).length > recent.length / 2;
+                        const without = games.filter(g => !tg[g.key]), withT = games.filter(g => tg[g.key]);
+                        if (sidelined(t) && !missedRecent) {
+                            const nowStarter = me.depthOrder - ahead.filter(x => sidelined(x)).length <= 1;
+                            apply(without, `${nowStarter ? 'Steps into a starting role' : 'Moves up the depth chart'}: ${t.name} is ${statusWord(t)}. ` + (without.length >= 2
+                                ? `${first} averaged ${avgOf(without).toFixed(1)} without him (${gWord(without.length)}) vs ${withT.length ? avgOf(withT).toFixed(1) : '–'} with him.`
+                                : `His recent scoring came as a backup, so this leans on Sleeper's projection.`), 'up');
+                        } else if (sidelined(t) && missedRecent) {
+                            ctx.notes.push({ text: `${t.name} is still ${statusWord(t)}, the same as in his last few games.`, tone: 'info' });
+                        } else if (!sidelined(t) && missedRecent) {
+                            apply(withT, `${t.name} is back, after missing ${first}'s recent games: expect a smaller role. ` + (withT.length >= 2
+                                ? `${first} averaged ${avgOf(withT).toFixed(1)} with him (${gWord(withT.length)}) vs ${avgOf(without).toFixed(1)} without.`
+                                : `Few games with him to go on, so this leans on Sleeper's projection.`), 'down');
+                        }
+                    }
+                }
+            } else {
+                // NBA: big-minutes teammates who are out now
+                const hurt = mates.filter(sidelined).slice(0, 6);
+                const logs = await Promise.all(hurt.map(t => playedGames('nba', t.pid, season)));
+                hurt.forEach((t, i) => {
+                    const tg = logs[i];
+                    const mins = Object.values(tg).map(s => { const sp = num(s.sp); return sp > 100 ? sp / 60 : sp; });
+                    const mpg = mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : 0;
+                    if (mpg < 24) return; // not a big enough role to change his
+                    const missedRecent = recent.filter(g => !tg[g.key]).length > recent.length / 2;
+                    const without = games.filter(g => !tg[g.key]), withT = games.filter(g => tg[g.key]);
+                    if (!missedRecent) apply(without, `${t.name} (${mpg.toFixed(0)} min/game) is ${statusWord(t)}: more minutes and shots to go around. ` + (without.length >= 2
+                        ? `${first} averaged ${avgOf(without).toFixed(1)} without him (${gWord(without.length)}) vs ${withT.length ? avgOf(withT).toFixed(1) : '–'} with him.`
+                        : `No games without him yet this season, so this leans on Sleeper's projection.`), 'up');
+                    else ctx.notes.push({ text: `${t.name} is still ${statusWord(t)}, the same as in his last few games.`, tone: 'info' });
+                });
+            }
+            // games that match every change (e.g. new QB and the starter ahead of him out); need 2+
+            if (sets.length) {
+                const match = games.filter(g => sets.every(st => st.has(g.key)));
+                if (match.length >= 2) { ctx.adjAvg = avgOf(match); ctx.adjN = match.length; }
+            }
+            return ctx.notes.length ? ctx : null;
+        }
+
+        // Rebuild the recent-scoring projection from games in the same situation
+        function applyRole(slot) {
+            const r = slot.role;
+            if (!r || !r.changed || r.adjAvg == null) return;
+            const m = slot.matchup || { factor: 1 };
+            slot.projBreakdown.baseAvg = r.adjAvg.toFixed(1);
+            slot.projectedPts = (m.bye ? 0 : r.adjAvg * (m.factor || 1)).toFixed(1);
+            slot.projBreakdown.adjVal = (parseFloat(slot.projectedPts) - r.adjAvg).toFixed(1);
+        }
+        const roleNotesHtml = (role, cls = '') => role ? role.notes.map(n => `<div class="${cls} ${n.tone === 'change' ? 'text-cyan-200' : 'text-slate-400'}"><i class="fa-solid ${n.tone === 'change' ? 'fa-people-arrows text-cyan-300' : 'fa-user-injured text-slate-500'} mr-1"></i>${esc(n.text)}</div>`).join('') : '';
 
         async function fetchPlayerData(player) {
             const p = { ...player };
@@ -1779,6 +1917,21 @@
                 error: result ? '' : `Couldn't load game logs (${errors.join(' | ')})`
             };
             computeProjection(slot);
+            try {
+                slot.role = await roleContext(slot);
+                applyRole(slot);
+                if (slot.role?.changed && slot.role.adjAvg == null && slot.sport === 'nfl' && slot.matchup?.week && !slot.matchup.bye) {
+                    // no games in this role yet: use Sleeper's projection for the game instead of his old-role scoring
+                    const pj = (await getSleeperProjections(await sleeperSeason(), slot.matchup.week).catch(() => ({})))[String(slot.sleeperId)];
+                    if (pj?.stats) {
+                        const v = logPoints(sleeperToStats(pj.stats, slot.pos), pj.stats, slot.pos);
+                        slot.projectedPts = v.toFixed(1);
+                        slot.projBreakdown.baseAvg = v.toFixed(1);
+                        slot.projBreakdown.adjVal = '0.0';
+                        slot.role.sleeperOnly = true;
+                    }
+                }
+            } catch (e) { console.warn('Role check failed:', e); }
             return slot;
         }
 
@@ -1833,7 +1986,7 @@
                     const stats = sleeperNbaStats(g.stats);
                     return {
                         when: g.date ? fmtDate(`${g.date}T12:00:00`) : '',
-                        date: g.date, week: Number(g.week),
+                        date: g.date, key: g.date, week: Number(g.week),
                         opponent: `${g.is_away_team ? '@' : 'vs'} ${g.opponent || 'OPP'}`,
                         result: '', stats, raw: g.stats, pts: nbaLogPoints(stats, g.stats)
                     };
@@ -1950,9 +2103,12 @@
                 const d = p.data;
                 const logs = d ? d.gameLogs : [];
                 const allLogs = d?.allLogs || logs;
-                const recent = logs.length ? logs.reduce((a, g) => a + g.pts, 0) / logs.length : null;
+                p.role = d?.role || null;
+                let recent = logs.length ? logs.reduce((a, g) => a + g.pts, 0) / logs.length : null;
+                const logAvg = recent;
+                if (p.role?.changed) recent = p.role.adjAvg; // games in the same situation, or none (lean on Sleeper)
                 let sd = 0;
-                if (logs.length >= 3) sd = Math.sqrt(logs.reduce((a, g) => a + (g.pts - recent) ** 2, 0) / logs.length);
+                if (logs.length >= 3) sd = Math.sqrt(logs.reduce((a, g) => a + (g.pts - logAvg) ** 2, 0) / logs.length);
                 const sdUse = Math.max(sd, 4, (recent || 0) * 0.22);
                 const pj = proj[p.pid] || [];
                 p.injury = pj[0]?.player?.injury_status || p.injury || '';
@@ -2133,6 +2289,7 @@
                         <div class="flex-1 min-w-0">
                             <div class="text-sm font-bold text-white truncate">${esc(p.name)}${p.injury ? ` <span class="text-[10px] font-bold text-rose-400">${esc(p.injury)}</span>` : ''}</div>
                             <div class="text-[11px] text-slate-400">${esc(p.team)} ${esc((p.fpos || [p.pos]).join('/'))} · ${p.games.length} game${p.games.length === 1 ? '' : 's'} this week</div>
+                            ${roleNotesHtml(p.role, 'text-[11px] mt-0.5')}
                         </div>
                         <div class="text-right shrink-0">
                             <div class="text-[9px] uppercase font-bold text-slate-400">Expected</div>
@@ -2724,7 +2881,7 @@
 
         // Numbers from a player's game logs: recent scoring, role (minutes or touches), range
         function pickupProfile(d, sport) {
-            const out = { n: 0, seasonN: 0 };
+            const out = { n: 0, seasonN: 0, role: d?.role || null };
             if (!d) return out;
             const logs = d.gameLogs || [];
             const all = d.allLogs || logs;
@@ -2788,6 +2945,8 @@
             if (dr.info.injury) pro.push(`${drN} is listed ${dr.info.injury}${dr.ir ? ' (IR-eligible, so stash him on IR if you have room)' : ''}.`);
             if (fa.trend >= 50) pro.push(`${fa.trend.toLocaleString()} managers added him in the last 24 hours: he may not last on waivers.`);
             if (fa.inj) con.push(`${faN} is listed ${fa.inj}.`);
+            (F.role?.notes || []).filter(n => n.tone === 'change').forEach(n => (n.dir === 'down' ? con : pro).push(n.text));
+            (D.role?.notes || []).filter(n => n.tone === 'change').forEach(n => (n.dir === 'down' ? pro : con).push(`${drN}: ${n.text}`));
             if (F.seasonN && F.seasonN < 3) con.push(`Only ${F.seasonN} game${F.seasonN === 1 ? '' : 's'} this season, so recent numbers are a small sample.`);
             if (F.l5 != null && fa.ppg - F.l5 >= 6) con.push(`His projection (${fa.ppg.toFixed(1)}) is well above what he's scored (${F.l5.toFixed(1)} over his last ${F.n}): Sleeper expects a bigger role.`);
             if (!F.n) con.push(`No game logs for ${faN} yet: this rests on the projection alone.`);
@@ -3921,6 +4080,8 @@
                     own = m && !m.bye && Number(m.week) === week ? parseFloat(d.projectedPts) : parseFloat(d.projBreakdown.baseAvg);
                 }
                 const sp = pr?.stats ? (leagueScoring ? leaguePoints(pr.stats) : num(pr.stats.pts_ppr)) : null;
+                p.role = d?.role || null;
+                if (p.role?.changed && p.role.adjAvg == null) own = null; // recent games came in a different role
                 p.sleeperProj = sp;
                 p.ownProj = own;
                 let mu = sp != null && own != null ? SLEEPER_WEIGHT * sp + (1 - SLEEPER_WEIGHT) * own : (sp ?? own ?? 0);
@@ -4102,6 +4263,7 @@
                                     <div class="flex-1 min-w-0">
                                         <div class="text-sm font-bold text-white truncate">${esc(p.name)} <span class="text-[11px] font-semibold text-slate-400">${esc(p.team)} ${esc(p.pos)}</span>${p.injury ? ` <span class="text-[10px] font-bold text-rose-400">${esc(p.injury)}</span>` : ''}</div>
                                         <div class="text-[11px] text-slate-400">${esc(kickLabel(p))}${p.known ? '' : ` · proj <strong class="text-emerald-400">${p.mu.toFixed(1)}</strong>`}${!p.known && p.sleeperProj != null && p.ownProj != null ? ` <span class="text-slate-500">(Sleeper ${p.sleeperProj.toFixed(1)} · ${Math.round(SLEEPER_WEIGHT * 100)}/${Math.round((1 - SLEEPER_WEIGHT) * 100)} with recent ${p.ownProj.toFixed(1)})</span>` : ''}${p.actual != null && p.status !== 'pre_game' ? ` · <strong class="text-white">${p.actual.toFixed(1)} pts</strong>` : ''}</div>
+                                        ${p.known ? '' : roleNotesHtml(p.role, 'text-[11px]')}
                                         <div class="text-[11px] text-slate-300 mt-0.5">${advice}</div>
                                     </div>
                                     ${compareBtn(p)}
