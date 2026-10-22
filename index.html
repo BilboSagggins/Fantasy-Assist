@@ -391,10 +391,6 @@
                     <a id="espn-open" href="#" target="_blank" rel="noopener" class="flex-1 text-center py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open ESPN</a>
                     <button onclick="espnRefresh()" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold"><i class="fa-solid fa-rotate mr-1"></i>Check again</button>
                 </div>
-                <div id="espn-edit-lineup" class="hidden flex gap-2">
-                    <button onclick="espnStartManual(espn.sport, 'review')" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-700/60 text-emerald-200 text-xs font-bold"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit my lineup</button>
-                    <button onclick="espnStartManual(espn.sport, 'slots')" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold"><i class="fa-solid fa-sliders mr-1"></i>Slots &amp; scoring</button>
-                </div>
                 <details data-card id="espn-team-wrap" class="group/et rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadScores()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-users text-cyan-300"></i>
@@ -5074,7 +5070,6 @@
             if (id === 'manual') return espnOpenManual(sport);
             espn.manual = false;
             document.getElementById('espn-fa-wrap').classList.remove('hidden');
-            document.getElementById('espn-edit-lineup').classList.add('hidden');
             document.getElementById('espn-lineup-wrap').classList.add('hidden');
             mw = null; renderManual();
             espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading your ESPN league...');
@@ -5770,7 +5765,6 @@
             document.getElementById('espn-teams').classList.add('hidden');
             document.getElementById('espn-connect').classList.add('hidden');
             document.getElementById('espn-fa-wrap').classList.add('hidden');
-            document.getElementById('espn-edit-lineup').classList.remove('hidden');
             document.getElementById('espn-lineup-wrap').classList.remove('hidden');
             espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Getting Sleeper projections for your players...');
             try {
@@ -5843,7 +5837,7 @@
                 badge.textContent = sport === 'nfl' ? `Week ${espn.period}` : new Date().toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
                 badge.classList.remove('hidden');
                 document.getElementById('espn-open').href = `https://fantasy.espn.com/${ESPN_SITE_PATH[sport]}/`;
-                espnMsg(`${esc(saved.teamName || 'My team')} · ${espn.roster.length} players you entered. Projections and scores are Sleeper's, in your league's scoring. When you change your lineup in ESPN, tap <strong>Edit my lineup</strong> so the advice matches.`);
+                espnMsg(`${esc(saved.teamName || 'My team')} · ${espn.roster.length} players you entered. Projections and scores are Sleeper's, in your league's scoring. When you change your lineup in ESPN, tap <strong>Edit my lineup</strong> in the My lineup card so the advice matches.`);
                 document.getElementById('espn-fix').innerHTML = '';
                 renderManualLineup();
                 espnFixLineup();
@@ -5890,7 +5884,10 @@
                 ${benchP.length ? `<div class="text-[11px] font-bold text-slate-400 pt-1.5">Bench</div>${benchP.map(row).join('')}` : ''}
                 ${irP.length ? `<div class="text-[11px] font-bold text-slate-400 pt-1.5">IR</div>${irP.map(row).join('')}` : ''}
                 <div class="text-[10px] text-slate-500 pt-1">Numbers are Sleeper projections in your scoring. Red means he won't score (bye, ${sport === 'nfl' ? '' : 'no game today, '}or ruled out).</div>
-                <button onclick="espnStartManual(espn.sport, 'review')" class="w-full mt-1 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-bold text-emerald-200"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit or move players</button>`;
+                <div class="flex gap-2 pt-1">
+                    <button onclick="espnStartManual(espn.sport, 'review')" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-700/60 text-emerald-200 text-xs font-bold"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit my lineup</button>
+                    <button onclick="espnStartManual(espn.sport, 'slots')" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold"><i class="fa-solid fa-sliders mr-1"></i>Slots &amp; scoring</button>
+                </div>`;
         }
     </script>
 </body>
