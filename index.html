@@ -372,6 +372,17 @@
                     <input id="autocollapse-espn" type="checkbox" class="sr-only peer" onchange="setAutoCollapse(this.checked)">
                     <span class="relative w-9 h-5 rounded-full bg-slate-700 peer-checked:bg-emerald-500 transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"></span>
                 </label>
+                <details data-card id="espn-lineup-wrap" open class="hidden group/elu rounded-xl bg-slate-900/80 border border-slate-700">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-clipboard-list text-emerald-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">My lineup</div>
+                            <div id="espn-lineup-sub" class="text-[11px] text-slate-400">The team you entered</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/elu:rotate-180"></i>
+                    </summary>
+                    <div id="espn-lineup-body" class="px-3 pb-3 space-y-1"></div>
+                </details>
                 <button id="espn-fix-btn" onclick="espnFixLineup()" class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 text-sm font-extrabold transition">
                     <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Fix my lineup
                 </button>
@@ -5064,6 +5075,7 @@
             espn.manual = false;
             document.getElementById('espn-fa-wrap').classList.remove('hidden');
             document.getElementById('espn-edit-lineup').classList.add('hidden');
+            document.getElementById('espn-lineup-wrap').classList.add('hidden');
             mw = null; renderManual();
             espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Loading your ESPN league...');
             let data = null, season = null, lastErr = null;
@@ -5759,6 +5771,7 @@
             document.getElementById('espn-connect').classList.add('hidden');
             document.getElementById('espn-fa-wrap').classList.add('hidden');
             document.getElementById('espn-edit-lineup').classList.remove('hidden');
+            document.getElementById('espn-lineup-wrap').classList.remove('hidden');
             espnMsg('<i class="fa-solid fa-spinner fa-spin mr-1"></i>Getting Sleeper projections for your players...');
             try {
                 await loadRosterDirectory(sport);
@@ -5832,6 +5845,7 @@
                 document.getElementById('espn-open').href = `https://fantasy.espn.com/${ESPN_SITE_PATH[sport]}/`;
                 espnMsg(`${esc(saved.teamName || 'My team')} · ${espn.roster.length} players you entered. Projections and scores are Sleeper's, in your league's scoring. When you change your lineup in ESPN, tap <strong>Edit my lineup</strong> so the advice matches.`);
                 document.getElementById('espn-fix').innerHTML = '';
+                renderManualLineup();
                 espnFixLineup();
                 ['espn-team-wrap', 'espn-ir-wrap'].forEach(w => { const el = document.getElementById(w); if (el.open) el.dispatchEvent(new Event('toggle')); });
                 espnInjurySub();
@@ -5851,6 +5865,32 @@
             if (/quest|gtd|day|probable/.test(s)) return 'QUESTIONABLE';
             if (/pup|na|nfi/.test(s)) return 'OUT';
             return '';
+        }
+
+        // The lineup you entered, slot by slot, with this week's (or today's) projection
+        function renderManualLineup() {
+            const sport = espn.sport, bench = ESPN_BENCH[sport], ir = ESPN_IR[sport];
+            const order = espnStarterSlots();
+            const rank = x => { const i = order.indexOf(x); return i < 0 ? 99 : i; };
+            const starters = espn.roster.filter(p => p.slot !== bench && p.slot !== ir).sort((a, b) => rank(a.slot) - rank(b.slot));
+            const filled = {}; starters.forEach(p => filled[p.slot] = (filled[p.slot] || 0) + 1);
+            const need = {}; order.forEach(x => need[x] = (need[x] || 0) + 1);
+            const empties = Object.entries(need).flatMap(([x, n]) => Array(Math.max(0, n - (filled[x] || 0))).fill(Number(x)));
+            const total = starters.reduce((a, p) => a + espnValue(p), 0);
+            document.getElementById('espn-lineup-sub').textContent = `${starters.length} starters · ${total.toFixed(1)} projected ${sport === 'nfl' ? 'this week' : 'today'}`;
+            const row = p => `<div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px]">
+                    <span class="w-11 shrink-0 text-[10px] font-extrabold text-emerald-400">${esc(ESPN_SLOT[sport][p.slot] || '')}</span>
+                    <div class="flex-1 min-w-0"><div class="font-bold text-slate-100 truncate">${esc(p.name)}${p.locked ? ' <i class="fa-solid fa-lock text-[9px] text-slate-500"></i>' : ''}</div><div class="text-slate-500 truncate">${esc(p.team)} ${esc(p.pos)} · ${espnGameText(p.game)}${espnInjTag(p)}</div></div>
+                    <span class="shrink-0 font-black ${espnValue(p) ? 'text-emerald-300' : 'text-rose-300'}">${espnValue(p).toFixed(1)}</span>
+                </div>`;
+            const empty = x => `<div class="flex items-center gap-2 p-1.5 rounded-lg border border-dashed border-amber-700/60 text-[11px]"><span class="w-11 shrink-0 text-[10px] font-extrabold text-amber-300">${esc(ESPN_SLOT[sport][x] || '')}</span><span class="text-amber-200">Empty slot</span></div>`;
+            const benchP = espn.roster.filter(p => p.slot === bench), irP = espn.roster.filter(p => p.slot === ir);
+            document.getElementById('espn-lineup-body').innerHTML = `
+                ${starters.map(row).join('')}${empties.map(empty).join('')}
+                ${benchP.length ? `<div class="text-[11px] font-bold text-slate-400 pt-1.5">Bench</div>${benchP.map(row).join('')}` : ''}
+                ${irP.length ? `<div class="text-[11px] font-bold text-slate-400 pt-1.5">IR</div>${irP.map(row).join('')}` : ''}
+                <div class="text-[10px] text-slate-500 pt-1">Numbers are Sleeper projections in your scoring. Red means he won't score (bye, ${sport === 'nfl' ? '' : 'no game today, '}or ruled out).</div>
+                <button onclick="espnStartManual(espn.sport, 'review')" class="w-full mt-1 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-bold text-emerald-200"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit or move players</button>`;
         }
     </script>
 </body>
