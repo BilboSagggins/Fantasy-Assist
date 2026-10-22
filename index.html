@@ -2074,6 +2074,23 @@
         const NBA_POS_EXPAND = { G: ['PG', 'SG'], F: ['SF', 'PF'] };
         const nbaFits = (p, slot) => (p.fpos || [p.pos]).flatMap(x => NBA_POS_EXPAND[x] || [x]).some(x => NBA_SLOTS[slot].includes(x));
 
+        // Sleeper doesn't publish lineup history, so remember every time the app sees a player on your bench
+        function seenKey(week) { return `rosteriq_benched_${league.leagueId}_${week}`; }
+        function recordLineup(week, ids, starterSet) {
+            let seen = {};
+            try { seen = JSON.parse(lsGet(seenKey(week)) || '{}') || {}; } catch (e) { seen = {}; }
+            const today = ymdLocal(new Date());
+            ids.forEach(pid => {
+                if (starterSet.has(pid)) return;
+                const d = seen[pid] = seen[pid] || [];
+                if (!d.includes(today)) d.push(today);
+            });
+            league.benchSeen = seen;
+            lsSet(seenKey(week), JSON.stringify(seen));
+        }
+        // On the bench on a later day than that game (same-day moves can't be timed, so they're not counted)
+        function benchedSince(pid, gameDate) { return (league.benchSeen?.[pid] || []).some(d => d > gameDate); }
+
         async function buildNbaPlan() {
             const tok = league.loadSeq;
             const season = league.season;
@@ -2100,6 +2117,7 @@
 
             const ids = (league.roster.players || []).map(String);
             const starterSet = new Set((league.roster.starters || []).map(String));
+            recordLineup(week, ids, starterSet);
             const byPid = {};
             (playerCache.nba || []).forEach(p => { if (p.sleeperId) byPid[String(p.sleeperId)] = p; });
             setLeagueMsg(`Analyzing your ${ids.length} players for Week ${week}... (first load takes a few seconds)`);
@@ -2162,20 +2180,25 @@
                 const startedRe = /progress|in_game|live|half/i;
                 const nextStarted = last ? p.games.slice(p.games.indexOf(last) + 1).some(g => g.done || startedRe.test(g.status || '')) : false;
                 p.lockable = last && !nextStarted ? last : null;
-                if (last && nextStarted && remaining.length) {
+                // Sleeper drops the lock option once he sits on your bench after the game, even if he's moved back
+                p.lockLost = null;
+                if (p.lockable && benchedSince(p.pid, p.lockable.date)) { p.lockLost = p.lockable; p.lockable = null; }
+                if (p.lockLost && remaining.length) {
+                    p.decision = { kind: 'final', text: `Can't lock his ${fmtDate(`${p.lockLost.date}T12:00:00`)} game (${p.lockLost.actual.toFixed(1)} pts) anymore: he was on your bench after it. Lock one of his next games instead.` };
+                } else if (last && nextStarted && remaining.length) {
                     p.decision = null; // his next game has started: the earlier game can't be locked anymore
                 } else if (last && last.dnp && !last.played) {
                     p.decision = { kind: 'final', text: `No stats from Sleeper yet for his ${fmtDate(`${last.date}T12:00:00`)} game. Tap Refresh in a few minutes before deciding to lock.` };
                 } else if (last && remaining.length) {
                     const v = p.remPlan.value;
                     p.decision = last.actual >= v
-                        ? { kind: 'lock', text: `LOCK his ${fmtDate(`${last.date}T12:00:00`)} game: ${last.actual.toFixed(1)} pts beats the ${v.toFixed(1)} expected from his remaining ${remaining.length} game${remaining.length === 1 ? '' : 's'}.` }
+                        ? { kind: 'lock', text: `LOCK his ${fmtDate(`${last.date}T12:00:00`)} game: ${last.actual.toFixed(1)} pts beats the ${v.toFixed(1)} expected from his remaining ${remaining.length} game${remaining.length === 1 ? '' : 's'}. Lock him before changing your lineup: moving him to the bench gives up this game.` }
                         : { kind: 'swap', text: `WAIT: ${last.actual.toFixed(1)} pts is below the ${v.toFixed(1)} expected from his remaining ${remaining.length} game${remaining.length === 1 ? '' : 's'}. Don't lock yet.` };
                 } else if (last) {
                     p.decision = { kind: 'final', text: `Week's over for him — if nothing was locked, his last game (${last.actual.toFixed(1)} pts) counts.` };
                 } else p.decision = null;
 
-                p.value = remaining.length ? (last ? Math.max(last.actual, p.remPlan.value) : p.remPlan.value) : (last ? last.actual : 0);
+                p.value = remaining.length ? (last && !p.lockLost ? Math.max(last.actual, p.remPlan.value) : p.remPlan.value) : (last ? last.actual : 0);
                 p._lockValue = p.value; p._lockDecision = p.decision;
                 p._stdValue = remaining.reduce((a, g) => a + g.mu, 0);
                 if (!isLockFormat()) { p.value = p._stdValue; p.decision = null; }
@@ -3478,8 +3501,12 @@
             const windowGame = p => { for (const w of windowDays) { const mu = projOn(p, w.date); if (mu != null) return { ...w, mu }; } return null; };
 
             const groups = [];
+            // a starter with a game worth locking stays put: benching him would give the game up
+            const lockFirst = p => nba && isLockFormat() && p && !isLocked(p) && p.lockable && !p.lockable.dnp && p.decision?.kind === 'lock';
+            league.lockFirst = positions.map((slot, idx) => byPid[starters[idx]]).filter(lockFirst);
             positions.forEach((slot, idx) => {
                 if (!slotOk(slot)) return;
+                if (lockFirst(byPid[starters[idx]])) return;
                 const pid = starters[idx];
                 if (isLocked(byPid[pid])) return; // locked for the week: leave this slot alone
                 const reason = problemOf(pid);
@@ -3519,7 +3546,7 @@
                 windowDays.forEach(({ date, label }) => positions.forEach((slot, idx) => {
                     if (!slotOk(slot) || problemIdx.has(idx)) return;
                     const st = byPid[starters[idx]];
-                    if (!st || isLocked(st)) return;
+                    if (!st || isLocked(st) || lockFirst(st)) return;
                     const stMu = projOn(st, date);
                     const cands = bench.filter(p => fits(p, slot)).map(p => ({ p, score: projOn(p, date) })).filter(o => o.score != null);
                     const base = { slot, idx, out: st, date, dayLabel: label, isToday: label === 'Today', selected: -1 };
@@ -3662,13 +3689,13 @@
             const startIds = (league.roster.starters || []).map(String);
             const startSlots = (league.info.roster_positions || []).filter(x => !['BN', 'IR', 'TAXI'].includes(x));
             const lockSlots = nba && isLockFormat() ? startIds.map((pid, i) => ({ pid, slot: startSlots[i] || 'UTIL', p: league.players.find(x => x.pid === pid) })) : [];
-            const canLock = p => p && (p.games || []).some(g => g.done && !g.dnp);
+            const canLock = p => p && (isLocked(p) || (p.lockable && !p.lockable.dnp));
             const lockable = lockSlots.filter(x => canLock(x.p)).map(x => x.p);
             const nLocked = lockable.filter(isLocked).length;
             const waitChip = x => {
                 const p = x.p;
                 const next = p && (p.games || []).find(g => !g.done);
-                const why = !p || x.pid === '0' ? 'empty slot' : (p.games || []).some(g => g.done && g.dnp) && !next ? 'no stats yet' : next ? `plays ${new Date(`${next.date}T12:00:00`).toLocaleDateString([], { weekday: 'short' })}` : (p.games || []).some(g => g.done && g.dnp) ? 'no stats yet' : 'no game this week';
+                const why = !p || x.pid === '0' ? 'empty slot' : p.lockLost ? 'benched after his game' : p.lockable && p.lockable.dnp ? 'no stats yet' : (p.games || []).some(g => g.done && !g.dnp) ? 'next game started' : (p.games || []).some(g => g.done && g.dnp) && !next ? 'no stats yet' : next ? `plays ${new Date(`${next.date}T12:00:00`).toLocaleDateString([], { weekday: 'short' })}` : (p.games || []).some(g => g.done && g.dnp) ? 'no stats yet' : 'no game this week';
                 return `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-dashed border-slate-700 text-[11px] text-slate-500"><i class="fa-solid fa-hourglass-half text-[10px]"></i>${esc(p?.name || (x.pid !== '0' ? pInfo(x.pid).name : x.slot))} <span class="text-[9px]">${esc(why)}</span></span>`;
             };
             const lockChip = p => {
@@ -3682,7 +3709,8 @@
                 <div class="p-2 rounded-lg bg-slate-950/50 border border-slate-800 space-y-1.5">
                     <div class="text-[11px] font-bold text-slate-300"><i class="fa-solid fa-lock mr-1 text-emerald-400"></i>Locked this week: ${nLocked} of ${lockSlots.length} · <span class="font-normal text-slate-500">tap to mark; locked players are left out of fixes</span></div>
                     <div class="flex flex-wrap gap-1.5">${lockSlots.map(x => canLock(x.p) ? lockChip(x.p) : waitChip(x)).join('')}</div>
-                    ${lockSlots.some(x => !canLock(x.p)) ? `<div class="text-[10px] text-slate-500">Dashed = can't be locked until he has played a game this week.</div>` : ''}
+                    ${(league.lockFirst || []).length ? `<div class="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-[11px] text-emerald-200 space-y-0.5">${league.lockFirst.map(p => `<div><i class="fa-solid fa-lock mr-1"></i><strong>Lock ${esc(p.name)} first</strong> (${p.lockable.actual.toFixed(1)} pts). Don't bench him: that gives up the game. His slot is left out of the fixes below.</div>`).join('')}</div>` : ''}
+                    ${lockSlots.some(x => !canLock(x.p)) ? `<div class="text-[10px] text-slate-500">Dashed = can't be locked right now: he hasn't played yet, his next game has started, or he sat on your bench after his game.</div>` : ''}
                     ${lockable.some(p => p.lockInfo?.status === 'maybe' && !isLocked(p)) ? `<div class="text-[10px] text-amber-300/80">? = may be locked (can't tell until his next game). Tap if you locked him.</div>` : ''}
                 </div>` : '';
             // NBA: one section per day (today, tomorrow) with open slots first, then upgrades
