@@ -2221,11 +2221,16 @@
                 p.counted = c != null ? Number(c) : null;
                 const played = (p.games || []).filter(g => g.done && !g.dnp);
                 if (c == null || !played.length) return;
-                const close = g => Math.abs(g.actual - Number(c)) < 0.15;
+                // Match Sleeper's counted score to the closest game: our math can be a point or two off
+                // Sleeper's (bonuses, stat corrections), so an exact match isn't required
+                const cv = Number(c);
                 const last = played[played.length - 1];
-                const k = played.findIndex(close);
-                if (k >= 0 && k < played.length - 1 && !close(last)) p.lockInfo = { status: 'locked', game: played[k] };
-                else if (k === played.length - 1 && Number(c) !== 0) p.lockInfo = { status: 'maybe', game: last };
+                const gap = g => Math.abs(g.actual - cv);
+                const nearest = played.reduce((b, g) => (gap(g) < gap(b) - 0.01 ? g : b), last);
+                const tol = Math.max(1.5, cv * 0.06);
+                if (nearest !== last && gap(nearest) <= tol && gap(last) > Math.min(gap(nearest) + 0.5, tol)) p.lockInfo = { status: 'locked', game: nearest };
+                else if (nearest === last && gap(last) <= tol && cv !== 0) p.lockInfo = { status: 'maybe', game: last };
+                else if (played.length > 1 && cv > 0 && gap(last) > tol) p.lockInfo = { status: 'locked', game: nearest }; // counted isn't his latest game, so he's locked
             });
             detectFormat(countedPts);
             applyLocks();
@@ -3432,9 +3437,8 @@
             league.players.forEach(p => {
                 if (!isLocked(p)) { p.lockedGame = null; return; }
                 const played = (p.games || []).filter(g => g.done && !g.dnp);
-                p.lockedGame = p.lockInfo?.game
-                    || played.find(g => p.counted != null && Math.abs(g.actual - p.counted) < 0.15)
-                    || played[played.length - 1] || null;
+                const near = p.counted != null && played.length ? played.reduce((b, g) => (Math.abs(g.actual - p.counted) < Math.abs(b.actual - p.counted) ? g : b)) : null;
+                p.lockedGame = p.lockInfo?.game || near || played[played.length - 1] || null;
                 p.lockedPts = p.counted ?? p.lockedGame?.actual ?? 0;
                 if (p.value != null) p.value = p.lockedPts;
             });
@@ -3805,7 +3809,19 @@
             el.className = `text-xs ${isError ? 'text-rose-300' : 'text-slate-400'}`;
         }
 
+        function withNbaBonuses(raw, scoring) {
+            if (!scoring || raw.reb === undefined || raw.pts === undefined) return raw;
+            const need = ['dd', 'td', 'bonus_pt_40p', 'bonus_pt_50p', 'bonus_reb_20p', 'bonus_ast_15p'].filter(k => typeof scoring[k] === 'number' && raw[k] === undefined);
+            if (!need.length) return raw;
+            const v = k => Number(raw[k]) || 0;
+            const tens = ['pts', 'reb', 'ast', 'stl', 'blk'].filter(k => v(k) >= 10).length;
+            const add = { dd: tens >= 2 ? 1 : 0, td: tens >= 3 ? 1 : 0, bonus_pt_40p: v('pts') >= 40 ? 1 : 0, bonus_pt_50p: v('pts') >= 50 ? 1 : 0, bonus_reb_20p: v('reb') >= 20 ? 1 : 0, bonus_ast_15p: v('ast') >= 15 ? 1 : 0 };
+            const out = { ...raw };
+            need.forEach(k => { out[k] = add[k]; });
+            return out;
+        }
         function leaguePoints(raw, scoring = leagueScoring) {
+            raw = withNbaBonuses(raw, scoring);
             let t = 0;
             for (const k in raw) {
                 const w = scoring?.[k];
