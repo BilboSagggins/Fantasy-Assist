@@ -2150,7 +2150,8 @@
                     const pr = pj.find(x => x.date === g.date);
                     const sp = pr?.stats ? (nbaLeagueScoring ? leaguePoints(pr.stats, nbaLeagueScoring) : calculateNBAPoints(sleeperNbaStats(pr.stats))) : null;
                     let mu = sp != null && recent != null ? SLEEPER_WEIGHT * sp + (1 - SLEEPER_WEIGHT) * recent : (sp ?? recent ?? 0);
-                    const done = g.status === 'complete';
+                    // Sleeper's schedule can be slow to mark a game final: any game from an earlier day is over
+                    const done = g.status === 'complete' || String(g.date) < ymdLocal(new Date());
                     let actual = null, dnp = false;
                     if (done) {
                         const lg = allLogs.find(l => l.date === g.date);
@@ -2219,6 +2220,15 @@
                 p.lockInfo = null;
                 const c = countedPts[p.pid];
                 p.counted = c != null ? Number(c) : null;
+                // His latest finished game may not have stats in the app yet. If Sleeper's counted score doesn't
+                // match any game we have, it belongs to that game: fill it in from Sleeper
+                const doneGames = (p.games || []).filter(g => g.done);
+                const lastDone = doneGames[doneGames.length - 1];
+                if (c != null && lastDone && lastDone.dnp && Number(c) > 0) {
+                    const known = doneGames.filter(g => !g.dnp);
+                    const tolC = Math.max(1.5, Number(c) * 0.06);
+                    if (!known.some(g => Math.abs(g.actual - Number(c)) <= tolC)) { lastDone.actual = Number(c); lastDone.dnp = false; lastDone.fromSleeper = true; }
+                }
                 const played = (p.games || []).filter(g => g.done && !g.dnp);
                 if (c == null || !played.length) return;
                 // Match Sleeper's counted score to the closest game: our math can be a point or two off
