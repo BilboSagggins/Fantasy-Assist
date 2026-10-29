@@ -6139,8 +6139,13 @@
                     items.push({ tone: bad && !good ? 'bad' : good && !bad ? 'good' : 'info', icon: 'fa-newspaper', text: a.headline || a.description || 'ESPN story', href: a.links?.web?.href, when: a.published });
                 });
                 events.filter(e => e.sid === p.sid).forEach(e => items.unshift({ tone: e.tone, icon: 'fa-bell', text: e.text, when: e.at, isNew: true }));
+                // an injury is the main story: it goes first, and anyone out or doubtful is marked bad
+                const ik = items.findIndex(it => it.icon === 'fa-kit-medical');
+                if (ik > 0) items.unshift(items.splice(ik, 1)[0]);
+                const inj = r.injury ? { text: r.injury, body: r.body || '', rank: injRank(r.injury) } : null;
                 const score = items.reduce((a, it) => a + (it.tone === 'good' ? 1 : it.tone === 'bad' ? (/^(Out|IR|Injured Reserve|Doubtful)/i.test(it.text) ? 2 : 1) * -1 : 0), 0);
-                return { ...p, items, score, overall: score > 0 ? 'good' : score < 0 ? 'bad' : 'steady' };
+                const overall = inj && inj.rank >= 2 ? 'bad' : score > 0 ? 'good' : score < 0 ? 'bad' : 'steady';
+                return { ...p, items, score, inj, overall };
             });
             lsSet(snapKey, JSON.stringify({ ...now, events, at: Date.now() }));
             return { players: out, firstRun: !snap };
@@ -6156,7 +6161,7 @@
                 steady: ['text-slate-400', 'bg-slate-900/60 border-slate-700', 'fa-circle-minus', 'Steady']
             };
             const rankOf = { bad: 0, good: 1, steady: 2 };
-            const ps = [...res.players].sort((a, b) => rankOf[a.overall] - rankOf[b.overall] || Math.abs(b.score) - Math.abs(a.score) || b.items.length - a.items.length);
+            const ps = [...res.players].sort((a, b) => (b.inj?.rank || 0) - (a.inj?.rank || 0) || rankOf[a.overall] - rankOf[b.overall] || Math.abs(b.score) - Math.abs(a.score) || b.items.length - a.items.length);
             const nGood = ps.filter(p => p.overall === 'good').length, nBad = ps.filter(p => p.overall === 'bad').length;
             document.getElementById(subId).textContent = `${nGood} trending up · ${nBad} trending down · ${ps.length - nGood - nBad} steady`;
             const when = t => { if (!t) return ''; const h = (Date.now() - new Date(t).getTime()) / 3600000; return h < 1 ? 'just now' : h < 24 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`; };
@@ -6170,7 +6175,7 @@
                 <details class="group/nw rounded-lg border ${p.items.length ? bg : 'bg-slate-950/50 border-slate-800'}">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-2 text-[12px]">
                         <i class="fa-solid ${ic} ${c}"></i>
-                        <span class="flex-1 min-w-0 truncate font-bold text-slate-100">${esc(p.name)} <span class="font-normal text-slate-500">${esc(p.team || '')} ${esc(p.pos || '')}</span></span>
+                        <span class="flex-1 min-w-0"><span class="block truncate font-bold text-slate-100">${esc(p.name)} <span class="font-normal text-slate-500">${esc(p.team || '')} ${esc(p.pos || '')}</span></span>${p.inj ? `<span class="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wide ${p.inj.rank >= 2 ? 'bg-rose-500/20 text-rose-200 border border-rose-500/50' : 'bg-amber-500/15 text-amber-200 border border-amber-500/40'}"><i class="fa-solid fa-kit-medical"></i>${esc(p.inj.text)}${p.inj.body ? ` · ${esc(p.inj.body)}` : ''}</span>` : ''}</span>
                         <span class="shrink-0 text-[10px] font-bold ${c}">${label}${p.items.length ? ` · ${p.items.length}` : ''}</span>
                         <i class="fa-solid fa-chevron-down text-slate-500 text-[10px] transition group-open/nw:rotate-180"></i>
                     </summary>
