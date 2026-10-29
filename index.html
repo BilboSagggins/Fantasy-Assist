@@ -6167,7 +6167,7 @@
             body.innerHTML = `
                 <div class="flex flex-wrap gap-2 text-[10px] text-slate-400">${['good', 'bad', 'warn', 'info'].map(k => `<span><i class="fa-solid ${TONE[k][2]} ${TONE[k][0]} mr-0.5"></i>${TONE[k][3]}</span>`).join('')}</div>
                 ${ps.map(p => { const [c, bg, ic, label] = TONE[p.overall]; return `
-                <details class="group/nw rounded-lg border ${p.items.length ? bg : 'bg-slate-950/50 border-slate-800'}" ${p.overall === 'bad' && p.items.length ? 'open' : ''}>
+                <details class="group/nw rounded-lg border ${p.items.length ? bg : 'bg-slate-950/50 border-slate-800'}">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-2 text-[12px]">
                         <i class="fa-solid ${ic} ${c}"></i>
                         <span class="flex-1 min-w-0 truncate font-bold text-slate-100">${esc(p.name)} <span class="font-normal text-slate-500">${esc(p.team || '')} ${esc(p.pos || '')}</span></span>
