@@ -262,6 +262,17 @@
                     </summary>
                     <div id="myteam-body" class="px-3 pb-3 space-y-1.5"></div>
                 </details>
+                <details data-card id="news-wrap" class="group/nws rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadSleeperNews()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-newspaper text-amber-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Team news</div>
+                            <div id="news-sub" class="text-[11px] text-slate-400">Injuries, playing time, role changes and headlines for your players</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/nws:rotate-180"></i>
+                    </summary>
+                    <div id="news-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
                 <details data-card id="league-plan-wrap" class="hidden group/plan rounded-xl bg-slate-900/80 border border-slate-700">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
                         <i class="fa-solid fa-lock text-emerald-300"></i>
@@ -401,6 +412,17 @@
                         <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/et:rotate-180"></i>
                     </summary>
                     <div id="espn-team-body" class="px-3 pb-3 space-y-1.5"></div>
+                </details>
+                <details data-card id="espn-news-wrap" class="group/enws rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) loadEspnNews()">
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
+                        <i class="fa-solid fa-newspaper text-amber-300"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-bold text-slate-100">Team news</div>
+                            <div id="espn-news-sub" class="text-[11px] text-slate-400">Injuries, playing time, role changes and headlines for your players</div>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs transition group-open/enws:rotate-180"></i>
+                    </summary>
+                    <div id="espn-news-body" class="px-3 pb-3 space-y-1.5"></div>
                 </details>
                 <details data-card id="espn-fa-wrap" class="group/efa rounded-xl bg-slate-900/80 border border-slate-700" ontoggle="if (this.open) espnLoadFreeAgents()">
                     <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-3">
@@ -4032,6 +4054,7 @@
             league.players = []; league.plan = null; league.fixes = []; league.fixOpen = new Set(); league.fixPanelOpen = false;
             document.getElementById('league-plan').innerHTML = '';
             document.getElementById('lineup-fix').innerHTML = '';
+            document.getElementById('news-body').innerHTML = '';
             document.getElementById('lineup-fix-wrap').classList.add('hidden');
             document.getElementById('league-plan-wrap').classList.add('hidden');
             document.getElementById('league-week-badge').classList.add('hidden');
@@ -5300,7 +5323,7 @@
                 espnMsg(`${esc(t.name || 'Your team')} · ${t.record || ''} · ${espn.roster.length} players. Projections are ESPN's, in your league's scoring.`);
                 document.getElementById('espn-fix').innerHTML = '';
                 espnFixLineup();
-                ['espn-team-wrap', 'espn-fa-wrap', 'espn-ir-wrap'].forEach(w => {
+                ['espn-team-wrap', 'espn-fa-wrap', 'espn-ir-wrap', 'espn-news-wrap'].forEach(w => {
                     const el = document.getElementById(w);
                     if (el.open) el.dispatchEvent(new Event('toggle'));
                 });
@@ -5906,7 +5929,7 @@
                 document.getElementById('espn-fix').innerHTML = '';
                 renderManualLineup();
                 espnFixLineup();
-                ['espn-team-wrap', 'espn-ir-wrap'].forEach(w => { const el = document.getElementById(w); if (el.open) el.dispatchEvent(new Event('toggle')); });
+                ['espn-team-wrap', 'espn-ir-wrap', 'espn-news-wrap'].forEach(w => { const el = document.getElementById(w); if (el.open) el.dispatchEvent(new Event('toggle')); });
                 espnInjurySub();
             } catch (e) {
                 espnMsg(`Couldn't load your players: ${esc(e.message)}. <button onclick="espnOpenManual('${sport}')" class="underline">Try again</button>`, true);
@@ -5953,6 +5976,239 @@
                     <button onclick="espnStartManual(espn.sport, 'review')" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-700/60 text-emerald-200 text-xs font-bold"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit my lineup</button>
                     <button onclick="espnStartManual(espn.sport, 'slots')" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold"><i class="fa-solid fa-sliders mr-1"></i>Slots &amp; scoring</button>
                 </div>`;
+        }
+
+        // ---------- Team news: what's changing for each of your players ----------
+        // Pulls together injuries, playing time, role changes (teammates out or back, a new QB), depth chart
+        // moves, trades and signings on his team, recent form, the next matchup and ESPN headlines.
+        const NEWS_BAD = /\b(out|injur|surgery|sprain|strain|torn|tear|fracture|miss(es|ed|ing)?|sidelined|ruled out|doubtful|suspend|demot|benched|setback|limited|concussion|illness|week-to-week|day-to-day)\b/i;
+        const NEWS_GOOD = /\b(return(s|ed|ing)?|cleared|activated|upgraded|starting|start(s|ed)? in place|promot|bigger role|expanded role|breakout|career-high|back in|healthy|full practice)\b/i;
+        const newsDataCache = {};
+        const newsFeedCache = {};
+        function newsFeed(sport) {
+            const c = newsFeedCache[sport];
+            if (c && Date.now() - c.at < 10 * 60 * 1000) return c.p;
+            const p = getJSON(`${ESPN_SITE}/${SPORT_PATH[sport]}/news?limit=100`).then(d => Array.isArray(d?.articles) ? d.articles : []).catch(() => []);
+            newsFeedCache[sport] = { at: Date.now(), p };
+            return p;
+        }
+        async function newsData(sport, sid, have) {
+            if (have) return have;
+            const c = newsDataCache[`${sport}:${sid}`];
+            if (c && Date.now() - c.at < 15 * 60 * 1000) return c.d;
+            const b = cachedPlayer(sport, sid);
+            const d = b ? await fetchPlayerData(b).catch(() => null) : null;
+            newsDataCache[`${sport}:${sid}`] = { at: Date.now(), d };
+            return d;
+        }
+        const injRank = s => { s = String(s || '').toLowerCase(); return !s ? 0 : /quest|gtd|day|prob/.test(s) ? 1 : /doubt/.test(s) ? 2 : 3; };
+
+        // Next opponent: how good his defense is, and who on that team is sitting out
+        const NFL_DEF_POS = { CB: 'cornerback', S: 'safety', FS: 'safety', SS: 'safety', DB: 'defensive back', LB: 'linebacker', OLB: 'linebacker', ILB: 'linebacker', MLB: 'linebacker', LOLB: 'linebacker', ROLB: 'linebacker', WLB: 'linebacker', SLB: 'linebacker', LCB: 'cornerback', RCB: 'cornerback', NB: 'nickel corner', DE: 'pass rusher', LDE: 'pass rusher', RDE: 'pass rusher', DT: 'defensive tackle', LDT: 'defensive tackle', RDT: 'defensive tackle', DL: 'defensive lineman', EDGE: 'pass rusher', NT: 'nose tackle' };
+        const NFL_COVERS = {
+            WR: ['CB', 'LCB', 'RCB', 'NB', 'S', 'FS', 'SS', 'DB'],
+            TE: ['S', 'FS', 'SS', 'LB', 'OLB', 'ILB', 'MLB', 'WLB', 'SLB', 'LOLB', 'ROLB'],
+            RB: ['DE', 'LDE', 'RDE', 'DT', 'LDT', 'RDT', 'DL', 'EDGE', 'NT', 'LB', 'OLB', 'ILB', 'MLB', 'WLB', 'SLB', 'LOLB', 'ROLB'],
+            QB: ['DE', 'LDE', 'RDE', 'DT', 'DL', 'EDGE', 'CB', 'LCB', 'RCB', 'S', 'FS', 'SS']
+        };
+        async function matchupNews(sport, p, d) {
+            const m = d?.matchup;
+            const items = [];
+            if (!m || m.bye || !m.oppLabel || m.oppLabel === 'TBD') return items;
+            const opp = m.oppAbbr || String(m.oppLabel).replace(/^(vs\s*|@\s*)/, '').trim();
+            const g = m.grade;
+            if (g && !/no rating|games? left/i.test(g.label)) items.push({ tone: g.tone === 'good' ? 'good' : g.tone === 'bad' ? 'bad' : 'info', icon: 'fa-shield-halved', text: `${g.label} ${m.oppLabel}${m.when ? ` (${m.when})` : ''}${m.facts?.[0] ? `: ${m.facts[0]}` : ''}` });
+            const raw = rawPlayers[sport] || {};
+            const theirs = Object.values(raw).filter(x => x.team && sameTeam(x.team, opp) && sidelined(x));
+            if (!theirs.length) return items;
+            if (sport === 'nfl') {
+                if (p.pos === 'D/ST') {
+                    const qb = theirs.find(x => x.pos === 'QB' && x.depthOrder === 1);
+                    if (qb) items.push({ tone: 'good', icon: 'fa-user-injured', text: `${opp}'s starting QB ${qb.name} is ${statusWord(qb)}: a backup should start against your defense.` });
+                    const skill = theirs.filter(x => ['RB', 'WR', 'TE'].includes(x.pos) && x.depthOrder === 1).slice(0, 3);
+                    if (skill.length) items.push({ tone: 'good', icon: 'fa-user-injured', text: `${opp} is missing ${skill.map(x => `${x.name} (${statusWord(x)})`).join(', ')}.` });
+                } else {
+                    const covers = NFL_COVERS[p.pos] || [];
+                    const starters = theirs.filter(x => covers.includes(x.depthPos || x.pos) && (x.depthOrder == null || x.depthOrder <= 1)).slice(0, 4);
+                    if (starters.length) items.push({ tone: 'good', icon: 'fa-user-injured', text: `${opp}'s defense is missing ${starters.map(x => `${x.name}, ${NFL_DEF_POS[x.depthPos || x.pos] || (x.depthPos || x.pos)} (${statusWord(x)})`).join('; ')}.` });
+                }
+            } else {
+                const season = await sleeperSeasonFor('nba');
+                const pool = theirs.slice(0, 8);
+                const logs = await Promise.all(pool.map(x => playedGames('nba', x.pid, season)));
+                const big = pool.map((x, i) => {
+                    const mins = Object.values(logs[i]).map(st => { const sp = num(st.sp); return sp > 100 ? sp / 60 : sp; });
+                    return { x, mpg: mins.length ? mins.reduce((a, b) => a + b, 0) / mins.length : 0 };
+                }).filter(o => o.mpg >= 22).sort((a, b) => b.mpg - a.mpg);
+                if (big.length) {
+                    const mine = new Set(p.fpos || [p.pos]);
+                    const samePos = big.filter(o => (o.x.fpos || [o.x.pos]).some(v => mine.has(v)));
+                    items.push({ tone: 'good', icon: 'fa-user-injured', text: `${opp} is without ${big.map(o => `${o.x.name} (${statusWord(o.x)}, ${o.mpg.toFixed(0)} min/game)`).join(', ')}${samePos.length ? ': a weaker defender at his position' : ': a thinner rotation to score against'}.` });
+                }
+            }
+            return items;
+        }
+
+        // players: [{ sid, name, team, pos, fpos, data }]
+        async function buildTeamNews(sport, players, key) {
+            await loadRosterDirectory(sport);
+            const raw = rawPlayers[sport] || {};
+            const [feed, trend, datas] = await Promise.all([
+                newsFeed(sport),
+                getJSON(`${SLEEPER}/players/${sport}/trending/add?lookback_hours=24&limit=200`).catch(() => []),
+                Promise.all(players.map(p => newsData(sport, p.sid, p.data)))
+            ]);
+            const trending = {}; (Array.isArray(trend) ? trend : []).forEach(t => trending[String(t.player_id)] = t.count);
+            // what we saw last time, to spot changes (injury status, team, depth chart, teammates)
+            const snapKey = `rosteriq_news_${key}`;
+            let snap = null; try { snap = JSON.parse(lsGet(snapKey) || 'null'); } catch (e) { snap = null; }
+            const events = (snap?.events || []).filter(e => Date.now() - e.at < 4 * 24 * 3600 * 1000);
+            const newEvent = (sid, tone, text) => { if (!events.some(e => e.sid === sid && e.text === text)) events.push({ sid, tone, text, at: Date.now() }); };
+            const now = { players: {}, teams: {} };
+            const myTeams = [...new Set(players.map(p => p.team).filter(Boolean))];
+            myTeams.forEach(t => { now.teams[t] = Object.values(raw).filter(r => r.team === t && r.status !== 'Inactive').map(r => r.pid); });
+
+            const mItems = await Promise.all(players.map((p, i) => matchupNews(sport, { ...p, fpos: raw[p.sid]?.fpos, pos: raw[p.sid]?.pos === 'DEF' ? 'D/ST' : (raw[p.sid]?.pos || p.pos) }, datas[i]).catch(() => [])));
+            const out = players.map((p, i) => {
+                const d = datas[i], r = raw[p.sid] || {};
+                const items = [...mItems[i]];
+                const add = (tone, icon, text) => items.push({ tone, icon, text });
+                now.players[p.sid] = { inj: r.injury || '', team: r.team || p.team || '', depth: r.depthOrder ?? null };
+                const was = snap?.players?.[p.sid];
+                // injuries
+                if (r.injury) {
+                    const k = injRank(r.injury);
+                    add(k >= 2 ? 'bad' : 'warn', 'fa-kit-medical', `${r.injury}${r.body ? ` (${r.body})` : ''}${r.notes ? `: ${r.notes}` : ''}`);
+                }
+                if (was) {
+                    const a = injRank(was.inj), b = injRank(r.injury);
+                    if (a > b) newEvent(p.sid, 'good', b ? `Injury upgraded: ${was.inj} → ${r.injury}` : `Off the injury report (was ${was.inj})`);
+                    if (b > a && a) newEvent(p.sid, 'bad', `Injury downgraded: ${was.inj} → ${r.injury}`);
+                    if (was.team && r.team && was.team !== r.team) newEvent(p.sid, 'warn', `Changed teams: ${was.team} → ${r.team}`);
+                    if (sport === 'nfl' && was.depth != null && r.depthOrder != null && was.depth !== r.depthOrder)
+                        newEvent(p.sid, r.depthOrder < was.depth ? 'good' : 'bad', `Depth chart: ${r.depthPos || p.pos} ${ordinal(was.depth)} → ${ordinal(r.depthOrder)}`);
+                }
+                // trades and signings on his team at his position
+                const t = r.team || p.team;
+                const before = snap?.teams?.[t];
+                if (before) {
+                    const myPos = new Set(sport === 'nba' ? (r.fpos || [r.pos]) : [r.depthPos || r.pos]);
+                    const samePos = x => sport === 'nba' ? (x.fpos || [x.pos]).some(v => myPos.has(v)) : myPos.has(x.depthPos || x.pos) || x.pos === r.pos;
+                    const nowSet = new Set(now.teams[t] || []), beforeSet = new Set(before);
+                    (now.teams[t] || []).filter(x => !beforeSet.has(x) && x !== p.sid).map(x => raw[x]).filter(x => x && samePos(x))
+                        .forEach(x => newEvent(p.sid, 'bad', `New competition: ${t} added ${x.name} (${(x.fpos || [x.pos]).join('/')})`));
+                    before.filter(x => !nowSet.has(x) && x !== p.sid).map(x => raw[x]).filter(x => x && samePos(x))
+                        .forEach(x => newEvent(p.sid, 'good', `${x.name} left ${t}${x.team ? ` (now ${x.team})` : ''}: fewer players at his spot`));
+                }
+                if (d) {
+                    // role changes: teammates out or back, a new starting QB
+                    (d.role?.notes || []).forEach(n => add(n.tone === 'change' ? (n.dir === 'down' ? 'bad' : n.dir === 'up' ? 'good' : 'warn') : 'info', n.tone === 'change' ? 'fa-people-arrows' : 'fa-user-injured', n.text));
+                    const logs = d.gameLogs || [];
+                    const avg = (arr, f) => arr.length ? arr.reduce((a, g) => a + f(g), 0) / arr.length : null;
+                    // playing time
+                    if (sport === 'nba' && logs.length >= 4) {
+                        const a = avg(logs.slice(0, 3), g => num(g.stats?.min)), b = avg(logs.slice(3), g => num(g.stats?.min));
+                        if (a - b >= 4) add('good', 'fa-stopwatch', `More minutes: ${a.toFixed(0)} a game over his last 3, up from ${b.toFixed(0)}.`);
+                        else if (b - a >= 4) add('bad', 'fa-stopwatch', `Fewer minutes: ${a.toFixed(0)} a game over his last 3, down from ${b.toFixed(0)}.`);
+                    }
+                    if (sport === 'nfl' && logs.length >= 3) {
+                        const snapOf = g => g.usage?.snapPct;
+                        const rs = logs.slice(0, 2).map(snapOf).filter(v => v != null), es = logs.slice(2).map(snapOf).filter(v => v != null);
+                        if (rs.length && es.length) {
+                            const a = rs.reduce((x, y) => x + y, 0) / rs.length, b = es.reduce((x, y) => x + y, 0) / es.length;
+                            if (a - b >= 10) add('good', 'fa-stopwatch', `On the field more: ${a.toFixed(0)}% of snaps his last 2 games, up from ${b.toFixed(0)}%.`);
+                            else if (b - a >= 10) add('bad', 'fa-stopwatch', `On the field less: ${a.toFixed(0)}% of snaps his last 2 games, down from ${b.toFixed(0)}%.`);
+                        }
+                    }
+                    // recent scoring
+                    const f = d.form || {};
+                    if (f.trendPct != null && Math.abs(f.trendPct) >= 20) add(f.trendPct > 0 ? 'good' : 'bad', f.trendPct > 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down', f.trendText);
+                    // next matchup (NFL)
+                    const m = d.matchup;
+                    if (sport === 'nfl' && m?.bye) add('warn', 'fa-calendar-xmark', 'On a bye this week.');
+                }
+                // fantasy buzz
+                const adds = trending[p.sid];
+                if (adds >= 1000) add('info', 'fa-fire', `${adds.toLocaleString()} managers added him in the last day.`);
+                // headlines that name him (ESPN, last 4 days)
+                const espnId = String(cachedPlayer(sport, p.sid)?.espnId || '');
+                if (espnId) feed.filter(a => Date.now() - new Date(a.published).getTime() < 4 * 24 * 3600 * 1000
+                        && (a.categories || []).some(c => String(c.athleteId || c.athlete?.id || '') === espnId)).slice(0, 3).forEach(a => {
+                    const txt = `${a.headline || ''} ${a.description || ''}`;
+                    const bad = NEWS_BAD.test(txt), good = NEWS_GOOD.test(txt);
+                    items.push({ tone: bad && !good ? 'bad' : good && !bad ? 'good' : 'info', icon: 'fa-newspaper', text: a.headline || a.description || 'ESPN story', href: a.links?.web?.href, when: a.published });
+                });
+                events.filter(e => e.sid === p.sid).forEach(e => items.unshift({ tone: e.tone, icon: 'fa-bell', text: e.text, when: e.at, isNew: true }));
+                const score = items.reduce((a, it) => a + (it.tone === 'good' ? 1 : it.tone === 'bad' ? (/^(Out|IR|Injured Reserve|Doubtful)/i.test(it.text) ? 2 : 1) * -1 : 0), 0);
+                return { ...p, items, score, overall: score > 0 ? 'good' : score < 0 ? 'bad' : 'steady' };
+            });
+            lsSet(snapKey, JSON.stringify({ ...now, events, at: Date.now() }));
+            return { players: out, firstRun: !snap };
+        }
+
+        function renderTeamNews(bodyId, subId, res, sport) {
+            const body = document.getElementById(bodyId);
+            const TONE = {
+                good: ['text-emerald-300', 'bg-emerald-500/10 border-emerald-500/40', 'fa-circle-up', 'Good'],
+                bad: ['text-rose-300', 'bg-rose-500/10 border-rose-500/40', 'fa-circle-down', 'Bad'],
+                warn: ['text-amber-300', 'bg-amber-500/10 border-amber-500/40', 'fa-circle-exclamation', 'Watch'],
+                info: ['text-slate-300', 'bg-slate-800/60 border-slate-700', 'fa-circle-info', 'FYI'],
+                steady: ['text-slate-400', 'bg-slate-900/60 border-slate-700', 'fa-circle-minus', 'Steady']
+            };
+            const rankOf = { bad: 0, good: 1, steady: 2 };
+            const ps = [...res.players].sort((a, b) => rankOf[a.overall] - rankOf[b.overall] || Math.abs(b.score) - Math.abs(a.score) || b.items.length - a.items.length);
+            const nGood = ps.filter(p => p.overall === 'good').length, nBad = ps.filter(p => p.overall === 'bad').length;
+            document.getElementById(subId).textContent = `${nGood} trending up · ${nBad} trending down · ${ps.length - nGood - nBad} steady`;
+            const when = t => { if (!t) return ''; const h = (Date.now() - new Date(t).getTime()) / 3600000; return h < 1 ? 'just now' : h < 24 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`; };
+            const item = it => { const [c, bg, ic] = TONE[it.tone] || TONE.info; return `<div class="flex items-start gap-2 p-1.5 rounded-lg border ${bg} text-[11px]">
+                    <i class="fa-solid ${it.icon} ${c} mt-0.5 w-3.5 text-center shrink-0"></i>
+                    <div class="flex-1 min-w-0 text-slate-200">${it.href ? `<a href="${esc(it.href)}" target="_blank" rel="noopener" class="underline decoration-slate-600">${esc(it.text)}</a>` : esc(it.text)}${it.when ? ` <span class="text-slate-500">· ${when(it.when)}</span>` : ''}${it.isNew ? ' <span class="text-[9px] font-bold text-cyan-300 uppercase">new</span>' : ''}</div>
+                    <i class="fa-solid ${ic} ${c} text-[10px] mt-0.5 shrink-0"></i></div>`; };
+            body.innerHTML = `
+                <div class="flex flex-wrap gap-2 text-[10px] text-slate-400">${['good', 'bad', 'warn', 'info'].map(k => `<span><i class="fa-solid ${TONE[k][2]} ${TONE[k][0]} mr-0.5"></i>${TONE[k][3]}</span>`).join('')}</div>
+                ${ps.map(p => { const [c, bg, ic, label] = TONE[p.overall]; return `
+                <details class="group/nw rounded-lg border ${p.items.length ? bg : 'bg-slate-950/50 border-slate-800'}" ${p.overall === 'bad' && p.items.length ? 'open' : ''}>
+                    <summary class="list-none cursor-pointer select-none flex items-center gap-2 p-2 text-[12px]">
+                        <i class="fa-solid ${ic} ${c}"></i>
+                        <span class="flex-1 min-w-0 truncate font-bold text-slate-100">${esc(p.name)} <span class="font-normal text-slate-500">${esc(p.team || '')} ${esc(p.pos || '')}</span></span>
+                        <span class="shrink-0 text-[10px] font-bold ${c}">${label}${p.items.length ? ` · ${p.items.length}` : ''}</span>
+                        <i class="fa-solid fa-chevron-down text-slate-500 text-[10px] transition group-open/nw:rotate-180"></i>
+                    </summary>
+                    <div class="px-2 pb-2 space-y-1">${p.items.length ? p.items.map(item).join('') : '<div class="text-[11px] text-slate-500">Nothing new: healthy, steady role.</div>'}</div>
+                </details>`; }).join('')}
+                <div class="text-[10px] text-slate-500">From Sleeper (injuries, depth charts, stats, adds) and ESPN headlines.${res.firstRun ? ' Trades, signings, injury upgrades and depth-chart moves show up from your next visit on, once the app has something to compare against.' : ' "New" items are changes since you last opened this, kept for 4 days.'}</div>`;
+        }
+
+        async function loadSleeperNews() {
+            const body = document.getElementById('news-body');
+            if (!league.leagueId || !league.players?.length) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            const tok = league.loadSeq;
+            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Checking news for your players...</div>`;
+            try {
+                const sport = league.sport;
+                const ps = league.players.filter(p => p.pid && p.name && !String(p.name).startsWith('Player #')).map(p => ({ sid: String(p.pid), name: p.name, team: p.team, pos: (p.fpos || [p.pos]).join('/'), data: p.data || null }));
+                const res = await buildTeamNews(sport, ps, `${league.leagueId}`);
+                if (tok !== league.loadSeq) return;
+                renderTeamNews('news-body', 'news-sub', res, sport);
+            } catch (e) { body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load team news: ${esc(e.message)}</div>`; }
+        }
+        async function loadEspnNews() {
+            const body = document.getElementById('espn-news-body');
+            if (!espn.roster.length) { body.innerHTML = `<div class="text-[11px] text-slate-400">Connect your league first.</div>`; return; }
+            body.innerHTML = `<div class="text-[11px] text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-1"></i>Checking news for your players...</div>`;
+            try {
+                const sport = espn.sport;
+                await loadRosterDirectory(sport);
+                const bySleeper = id => (playerCache[sport] || []).find(x => String(x.sleeperId) === String(id));
+                const byEspn = id => (playerCache[sport] || []).find(x => String(x.espnId) === String(id));
+                const ps = espn.roster.map(r => {
+                    const c = espn.manual ? bySleeper(r.pid) : byEspn(r.pid);
+                    const sid = c ? String(c.sleeperId) : (espn.manual ? String(r.pid) : null);
+                    return sid ? { sid, name: r.name, team: r.team, pos: r.pos, data: null } : null;
+                }).filter(Boolean);
+                const res = await buildTeamNews(sport, ps, `espn_${sport}_${espn.leagueId}`);
+                renderTeamNews('espn-news-body', 'espn-news-sub', res, sport);
+            } catch (e) { body.innerHTML = `<div class="text-[11px] text-rose-300">Couldn't load team news: ${esc(e.message)}</div>`; }
         }
     </script>
 </body>
