@@ -6,20 +6,15 @@ every class name found in index.html, and saves the result as styles.css.
 
 Run after changing classes:  python3 tools/build_css.py
 Needs: pip install playwright && playwright install chromium
-The Tailwind play script comes from TAILWIND_JS (a local file) or the CDN.
+Uses the copy of Tailwind's play script (v3.4.17, MIT license) in tools/, so it works offline.
 """
-import os, re, sys, urllib.request, pathlib
+import re, sys, pathlib
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-TW_URL = 'https://cdn.tailwindcss.com/3.4.17'
 
 def tailwind_js():
-    p = os.environ.get('TAILWIND_JS')
-    if p and os.path.exists(p):
-        return open(p, encoding='utf-8').read()
-    with urllib.request.urlopen(TW_URL) as r:
-        return r.read().decode('utf-8')
+    return (ROOT / 'tools' / 'tailwind-play-3.4.17.js').read_text(encoding='utf-8')
 
 def selectors(css):
     return set(re.findall(r'(?:^|[}\s,])(\.[^\s{,]+)', css))
