@@ -1,11 +1,11 @@
 // RosterIQ service worker: makes the site installable and opens instantly.
 // Bump VERSION whenever index.html changes so phones pick up the update.
-const VERSION = 'rosteriq-v57';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/logo.png'];
+const VERSION = 'rosteriq-v58';
+const SHELL = ['./', './index.html', './styles.css', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/logo.png'];
 const STATIC_HOSTS = ['cdn.tailwindcss.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', event => {
-    event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+    event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
@@ -22,6 +22,15 @@ self.addEventListener('fetch', event => {
     const url = new URL(req.url);
 
     // The app page: always try the network first so you get the newest version
+    // The app's styles: same as the page, newest first so they always match it
+    if (url.origin === location.origin && url.pathname.endsWith('/styles.css')) {
+        event.respondWith(
+            fetch(req, { cache: 'no-store' })
+                .then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put('./styles.css', copy)); return res; })
+                .catch(() => caches.match('./styles.css'))
+        );
+        return;
+    }
     if (req.mode === 'navigate' || (url.origin === location.origin && url.pathname.endsWith('/index.html'))) {
         event.respondWith(
             fetch(req, { cache: 'no-store' }) // skip the browser's 10-minute cache so you always get the newest page

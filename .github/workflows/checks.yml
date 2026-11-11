@@ -1,0 +1,27 @@
+name: Checks
+
+# Runs the app's smoke tests (a headless browser with a mock Sleeper/ESPN league)
+# and makes sure styles.css covers every class in index.html.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install a headless browser
+        run: |
+          pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+      - name: Styles are up to date
+        run: python tools/build_css.py --check
+      - name: Smoke tests
+        run: python tests/smoke.py

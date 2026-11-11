@@ -1,0 +1,2 @@
+tests/out-*.png
+__pycache__/
